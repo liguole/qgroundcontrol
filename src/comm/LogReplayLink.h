@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   (c) 2009-2016 QGROUNDCONTROL PROJECT <http://www.qgroundcontrol.org>
+ *   (c) 2009-2018 QGROUNDCONTROL PROJECT <http://www.qgroundcontrol.org>
  *
  * QGroundControl is licensed according to the terms in the file
  * COPYING.md in the root of the source code directory.
@@ -8,8 +8,7 @@
  ****************************************************************************/
 
 
-#ifndef LogReplayLink_H
-#define LogReplayLink_H
+#pragma once
 
 #include "LinkInterface.h"
 #include "LinkConfiguration.h"
@@ -40,8 +39,8 @@ public:
     void        loadSettings            (QSettings& settings, const QString& root);
     void        saveSettings            (QSettings& settings, const QString& root);
     void        updateSettings          ();
-    bool        isAutoConnectAllowed    () { return false; }
     QString     settingsURL             () { return "LogReplaySettings.qml"; }
+    QString     settingsTitle           () { return tr("Log Replay Link Settings"); }
 signals:
     void fileNameChanged();
 
@@ -57,8 +56,6 @@ class LogReplayLink : public LinkInterface
     friend class LinkManager;
 
 public:
-    virtual LinkConfiguration* getLinkConfiguration() { return _config; }
-
     /// @return true: log is currently playing, false: log playback is paused
     bool isPlaying(void) { return _readTickTimer.isActive(); }
 
@@ -97,6 +94,7 @@ signals:
     void playbackAtEnd(void);
     void playbackError(void);
     void playbackPercentCompleteChanged(int percentComplete);
+    void currentLogTimeSecs(int secs);
 
     // Internal signals
     void _playOnThread(void);
@@ -111,12 +109,13 @@ private slots:
 
 private:
     // Links are only created/destroyed by LinkManager so constructor/destructor is not public
-    LogReplayLink(LogReplayLinkConfiguration* config);
+    LogReplayLink(SharedLinkConfigurationPointer& config);
     ~LogReplayLink();
 
     void _replayError(const QString& errorMsg);
     quint64 _parseTimestamp(const QByteArray& bytes);
     quint64 _seekToNextMavlinkMessage(mavlink_message_t* nextMsg);
+    quint64 _readNextMavlinkMessage(QByteArray& bytes);
     bool _loadLogFile(void);
     void _finishPlayback(void);
     void _playbackError(void);
@@ -129,12 +128,13 @@ private:
     // Virtuals from QThread
     virtual void run(void);
 
-    LogReplayLinkConfiguration* _config;
+    LogReplayLinkConfiguration* _logReplayConfig;
 
     bool    _connected;
-    QTimer _readTickTimer;      ///< Timer which signals a read of next log record
+    int     _mavlinkChannel;
+    QTimer  _readTickTimer;      ///< Timer which signals a read of next log record
 
-    static const char* _errorTitle; ///< Title for communicatorError signals
+    QString _errorTitle; ///< Title for communicatorError signals
 
     quint64 _logCurrentTimeUSecs;   ///< The timestamp of the next message in the log file.
     quint64 _logStartTimeUSecs;     ///< The first timestamp in the current log file.
@@ -155,4 +155,3 @@ private:
     static const int cbTimestamp = sizeof(quint64);
 };
 
-#endif

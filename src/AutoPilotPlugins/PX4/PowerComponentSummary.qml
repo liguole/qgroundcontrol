@@ -12,7 +12,7 @@
 ///     @brief Battery, propeller and magnetometer summary
 ///     @author Gus Grubba <mavlink@grubba.com>
 
-import QtQuick 2.2
+import QtQuick 2.3
 import QtQuick.Controls 1.2
 
 import QGroundControl.FactSystem 1.0
@@ -36,17 +36,17 @@ FactPanel {
         anchors.fill:       parent
 
         VehicleSummaryRow {
-            labelText: qsTr("Battery Full:")
+            labelText: qsTr("Battery Full")
             valueText: batVChargedFact ? batVChargedFact.valueString + " " + batVChargedFact.units : ""
         }
 
         VehicleSummaryRow {
-            labelText: qsTr("Battery Empty:")
+            labelText: qsTr("Battery Empty")
             valueText: batVEmptyFact ? batVEmptyFact.valueString + " " + batVEmptyFact.units : ""
         }
 
         VehicleSummaryRow {
-            labelText: qsTr("Number of Cells:")
+            labelText: qsTr("Number of Cells")
             valueText: batCellsFact ? batCellsFact.valueString : ""
         }
     }

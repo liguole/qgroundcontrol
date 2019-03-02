@@ -15,7 +15,7 @@
 
 APMTuningComponent::APMTuningComponent(Vehicle* vehicle, AutoPilotPlugin* autopilot, QObject* parent)
     : VehicleComponent(vehicle, autopilot, parent)
-    , _name("Tuning")
+    , _name(tr("Tuning"))
 {
 }
 
@@ -65,6 +65,9 @@ QUrl APMTuningComponent::setupSource(void) const
                 qmlFile = QStringLiteral("qrc:/qml/APMTuningComponentCopter.qml");
             }
             break;
+        case MAV_TYPE_SUBMARINE:
+            qmlFile = QStringLiteral("qrc:/qml/APMTuningComponentSub.qml");
+            break;
         default:
             // No tuning panel
             break;
@@ -76,16 +79,4 @@ QUrl APMTuningComponent::setupSource(void) const
 QUrl APMTuningComponent::summaryQmlSource(void) const
 {
     return QUrl();
-}
-
-QString APMTuningComponent::prerequisiteSetup(void) const
-{
-    APMAutoPilotPlugin* plugin = dynamic_cast<APMAutoPilotPlugin*>(_autopilot);
-    Q_ASSERT(plugin);
-
-    if (!plugin->airframeComponent()->setupComplete()) {
-        return plugin->airframeComponent()->name();
-    }
-
-    return QString();
 }

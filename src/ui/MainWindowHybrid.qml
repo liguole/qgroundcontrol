@@ -8,7 +8,7 @@
  ****************************************************************************/
 
 
-import QtQuick          2.5
+import QtQuick          2.3
 import QtQuick.Controls 1.2
 import QtQuick.Dialogs  1.2
 
@@ -22,11 +22,19 @@ Item {
     }
 
     function attemptWindowClose() {
-        mainWindowInner.item.attemptWindowClose()
+        if(!mainWindowInner.item) {
+            controller.reallyClose()
+        } else {
+            mainWindowInner.item.attemptWindowClose()
+        }
     }
 
     function showMessage(message) {
-        mainWindowInner.item.showMessage(message)
+        if(mainWindowInner.item) {
+            mainWindowInner.item.showMessage(message)
+        } else {
+            console.log(message)
+        }
     }
 
     Loader {

@@ -8,7 +8,7 @@
  ****************************************************************************/
 
 
-import QtQuick              2.5
+import QtQuick              2.3
 import QtQuick.Controls     1.2
 
 import QGroundControl.FactSystem    1.0
@@ -55,20 +55,22 @@ SetupPage {
             property Fact _mountAngMinPan:      controller.getParameterFact(-1, "MNT_ANGMIN_PAN")
             property Fact _mountAngMaxPan:      controller.getParameterFact(-1, "MNT_ANGMAX_PAN")
 
-            property Fact _rc5Function:         controller.getParameterFact(-1, "RC5_FUNCTION")
-            property Fact _rc6Function:         controller.getParameterFact(-1, "RC6_FUNCTION")
-            property Fact _rc7Function:         controller.getParameterFact(-1, "RC7_FUNCTION")
-            property Fact _rc8Function:         controller.getParameterFact(-1, "RC8_FUNCTION")
-            property Fact _rc9Function:         controller.getParameterFact(-1, "RC9_FUNCTION")
-            property Fact _rc10Function:        controller.getParameterFact(-1, "RC10_FUNCTION")
-            property Fact _rc11Function:        controller.getParameterFact(-1, "RC11_FUNCTION")
-            property Fact _rc12Function:        controller.getParameterFact(-1, "RC12_FUNCTION")
-            property Fact _rc13Function:        controller.getParameterFact(-1, "RC13_FUNCTION")
-            property Fact _rc14Function:        controller.getParameterFact(-1, "RC14_FUNCTION")
+            property Fact _rc5Function:         controller.getParameterFact(-1, "r.SERVO5_FUNCTION")
+            property Fact _rc6Function:         controller.getParameterFact(-1, "r.SERVO6_FUNCTION")
+            property Fact _rc7Function:         controller.getParameterFact(-1, "r.SERVO7_FUNCTION")
+            property Fact _rc8Function:         controller.getParameterFact(-1, "r.SERVO8_FUNCTION")
+            property Fact _rc9Function:         controller.getParameterFact(-1, "r.SERVO9_FUNCTION")
+            property Fact _rc10Function:        controller.getParameterFact(-1, "r.SERVO10_FUNCTION")
+            property Fact _rc11Function:        controller.getParameterFact(-1, "r.SERVO11_FUNCTION")
+            property Fact _rc12Function:        controller.getParameterFact(-1, "r.SERVO12_FUNCTION")
+            property Fact _rc13Function:        controller.getParameterFact(-1, "r.SERVO13_FUNCTION")
+            property Fact _rc14Function:        controller.getParameterFact(-1, "r.SERVO14_FUNCTION")
 
             property bool _tiltEnabled:         false
             property bool _panEnabled:          false
             property bool _rollEnabled:         false
+
+            property bool _servoReverseIsBool:  controller.parameterExists(-1, "RC5_REVERSED")
 
             // Gimbal Settings not available on older firmware
             property bool _showGimbaLSettings:  controller.parameterExists(-1, "MNT_DEFLT_MODE")
@@ -90,15 +92,15 @@ SetupPage {
             }
 
             function setGimbalSettingsServoInfo(loader, channel) {
-                var rcPrefix = "RC" + channel + "_"
+                var rcPrefix = "r.SERVO" + channel + "_"
 
                 loader.gimbalOutIndex = channel - 4
                 loader.servoPWMMinFact = controller.getParameterFact(-1, rcPrefix + "MIN")
                 loader.servoPWMMaxFact = controller.getParameterFact(-1, rcPrefix + "MAX")
-                loader.servoReverseFact = controller.getParameterFact(-1, rcPrefix + "REV")
+                loader.servoReverseFact = controller.getParameterFact(-1, rcPrefix + "REVERSED")
             }
 
-            /// Gimbal output channels are stored in RC#_FUNCTION parameters. We need to loop through those
+            /// Gimbal output channels are stored in SERVO#_FUNCTION parameters. We need to loop through those
             /// to find them and setup the ui accordindly.
             function calcGimbalOutValues() {
                 gimbalDirectionTiltLoader.gimbalOutIndex = 0
@@ -108,7 +110,7 @@ SetupPage {
                 _panEnabled = false
                 _rollEnabled = false
                 for (var channel=_firstGimbalOutChannel; channel<=_lastGimbalOutChannel; channel++) {
-                    var functionFact = controller.getParameterFact(-1, "RC" + channel + "_FUNCTION")
+                    var functionFact = controller.getParameterFact(-1, "r.SERVO" + channel + "_FUNCTION")
                     if (functionFact.value == _rcFunctionMountTilt) {
                         _tiltEnabled = true
                         setGimbalSettingsServoInfo(gimbalDirectionTiltLoader, channel)
@@ -125,7 +127,7 @@ SetupPage {
             function setRCFunction(channel, rcFunction) {
                 // First clear any previous settings for this function
                 for (var index=_firstGimbalOutChannel; index<=_lastGimbalOutChannel; index++) {
-                    var functionFact = controller.getParameterFact(-1, "RC" + index + "_FUNCTION")
+                    var functionFact = controller.getParameterFact(-1, "r.SERVO" + index + "_FUNCTION")
                     if (functionFact.value != _rcFunctionDisabled && functionFact.value == rcFunction) {
                         functionFact.value = _rcFunctionDisabled
                     }
@@ -133,12 +135,12 @@ SetupPage {
 
                 // Now set the function into the new channel
                 if (channel != 0) {
-                    var functionFact = controller.getParameterFact(-1, "RC" + channel + "_FUNCTION")
+                    var functionFact = controller.getParameterFact(-1, "r.SERVO" + channel + "_FUNCTION")
                     functionFact.value = rcFunction
                 }
             }
 
-            // Whenever any RC#_FUNCTION parameters chagnes we need to go looking for gimbal output channels again
+            // Whenever any SERVO#_FUNCTION parameters changes we need to go looking for gimbal output channels again
             Connections { target: _rc5Function; onValueChanged: calcGimbalOutValues() }
             Connections { target: _rc6Function; onValueChanged: calcGimbalOutValues() }
             Connections { target: _rc7Function; onValueChanged: calcGimbalOutValues() }
@@ -168,17 +170,29 @@ SetupPage {
 
             ListModel {
                 id: gimbalOutModel
+                // It appears that QGCComboBox can't handle models that don't have a initial item
+                // after onModelChanged
                 ListElement { text: qsTr("Disabled"); value: 0 }
-                ListElement { text: qsTr("Channel 5"); value: 5 }
-                ListElement { text: qsTr("Channel 6"); value: 6 }
-                ListElement { text: qsTr("Channel 7"); value: 7 }
-                ListElement { text: qsTr("Channel 8"); value: 8 }
-                ListElement { text: qsTr("Channel 9"); value: 9 }
-                ListElement { text: qsTr("Channel 10"); value: 10 }
-                ListElement { text: qsTr("Channel 11"); value: 11 }
-                ListElement { text: qsTr("Channel 12"); value: 12 }
-                ListElement { text: qsTr("Channel 13"); value: 13 }
-                ListElement { text: qsTr("Channel 14"); value: 14 }
+
+                function update(number) {
+                    // Not enough channels
+                    if(number < 6) {
+                        return
+                    }
+                    for(var i = 5; i <= number; i++) {
+                        var text = qsTr("Channel ") + i
+                        append({"text": text, "value": i})
+                    }
+                }
+
+                Component.onCompleted: {
+                    // Number of main outputs
+                    var baseValue = 8
+                    // Extra outputs
+                    // http://ardupilot.org/copter/docs/parameters.html#brd-pwm-count-auxiliary-pin-config
+                    var brd_pwm_count_value = controller.getParameterFact(-1, "BRD_PWM_COUNT").value
+                    update(8 + (brd_pwm_count_value == 7 ? 3 : brd_pwm_count_value))
+                }
             }
 
             Component {
@@ -195,6 +209,7 @@ SetupPage {
                 //      property Fact servoPWMMinFact
                 //      property Fact servoPWMMaxFact
                 //      property Fact servoReverseFact
+                //      property bool servoReverseIsBool
                 //      property int rcFunction
 
                 Item {
@@ -234,10 +249,12 @@ SetupPage {
                             anchors.top:        mountStabCheckBox.bottom
                             anchors.right:       parent.right
                             text:               qsTr("Servo reverse")
-                            checkedValue:       1
-                            uncheckedValue:     0
+                            checkedValue:       _servoReverseIsBool ? 1 : -1
+                            uncheckedValue:     _servoReverseIsBool ? 0 : 1
                             fact:               servoReverseFact
                             enabled:            directionEnabled
+
+                            property bool _servoReverseIsBool: servoReverseIsBool
                         }
 
                         QGCLabel {
@@ -462,6 +479,7 @@ SetupPage {
                 property Fact   servoPWMMinFact:    Fact { }
                 property Fact   servoPWMMaxFact:    Fact { }
                 property Fact   servoReverseFact:   Fact { }
+                property bool   servoReverseIsBool: _servoReverseIsBool
                 property int    rcFunction:         _rcFunctionMountTilt
             }
 
@@ -479,6 +497,7 @@ SetupPage {
                 property Fact   servoPWMMinFact:    Fact { }
                 property Fact   servoPWMMaxFact:    Fact { }
                 property Fact   servoReverseFact:   Fact { }
+                property bool   servoReverseIsBool: _servoReverseIsBool
                 property int    rcFunction:         _rcFunctionMountRoll
             }
 
@@ -496,6 +515,7 @@ SetupPage {
                 property Fact   servoPWMMinFact:    Fact { }
                 property Fact   servoPWMMaxFact:    Fact { }
                 property Fact   servoReverseFact:   Fact { }
+                property bool   servoReverseIsBool: _servoReverseIsBool
                 property int    rcFunction:         _rcFunctionMountPan
             }
 

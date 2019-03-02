@@ -54,22 +54,14 @@ QStringList APMCameraComponent::setupCompleteChangedTriggerList(void) const
 
 QUrl APMCameraComponent::setupSource(void) const
 {
+    if (_vehicle->sub()) {
+        return QUrl::fromUserInput(QStringLiteral("qrc:/qml/APMCameraSubComponent.qml"));
+    }
     return QUrl::fromUserInput(QStringLiteral("qrc:/qml/APMCameraComponent.qml"));
+
 }
 
 QUrl APMCameraComponent::summaryQmlSource(void) const
 {
     return QUrl::fromUserInput(QStringLiteral("qrc:/qml/APMCameraComponentSummary.qml"));
-}
-
-QString APMCameraComponent::prerequisiteSetup(void) const
-{
-    APMAutoPilotPlugin* plugin = dynamic_cast<APMAutoPilotPlugin*>(_autopilot);
-    Q_ASSERT(plugin);
-
-    if (!plugin->airframeComponent()->setupComplete()) {
-        return plugin->airframeComponent()->name();
-    }
-
-    return QString();
 }

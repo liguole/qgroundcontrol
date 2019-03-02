@@ -28,19 +28,29 @@
 
 bool APMAirframeComponentController::_typesRegistered = false;
 
+const char* APMAirframeComponentController::_oldFrameParam = "FRAME";
+const char* APMAirframeComponentController::_newFrameParam = "FRAME_CLASS";
+
 APMAirframeComponentController::APMAirframeComponentController(void) :
     _airframeTypesModel(new QmlObjectListModel(this))
 {
     if (!_typesRegistered) {
         _typesRegistered = true;
-        qmlRegisterUncreatableType<APMAirframeType>("QGroundControl.Controllers", 1, 0, "APMAiframeType", QStringLiteral("Can only reference APMAirframeType"));
-        qmlRegisterUncreatableType<APMAirframe>("QGroundControl.Controllers", 1, 0, "APMAiframe", QStringLiteral("Can only reference APMAirframe"));
+        qmlRegisterUncreatableType<APMAirframeType>("QGroundControl.Controllers", 1, 0, "APMAirframeType", QStringLiteral("Can only reference APMAirframeType"));
     }
     _fillAirFrames();
 
-    Fact *frame = getParameterFact(FactSystem::defaultComponentId, QStringLiteral("FRAME"));
-    connect(frame, &Fact::vehicleUpdated, this, &APMAirframeComponentController::_factFrameChanged);
-    _factFrameChanged(frame->rawValue());
+    Fact* frame = NULL;
+    if (parameterExists(FactSystem::defaultComponentId, _oldFrameParam)) {
+        frame = getParameterFact(FactSystem::defaultComponentId, _oldFrameParam);
+    } else if (parameterExists(FactSystem::defaultComponentId, _newFrameParam)){
+        frame = getParameterFact(FactSystem::defaultComponentId, _newFrameParam);
+    }
+
+    if (frame) {
+        connect(frame, &Fact::rawValueChanged, this, &APMAirframeComponentController::_factFrameChanged);
+        _factFrameChanged(frame->rawValue());
+    }
 }
 
 APMAirframeComponentController::~APMAirframeComponentController()
@@ -227,7 +237,7 @@ void APMAirframeComponentController::_githubJsonDownloadFinished(QString remoteF
     QGCFileDownload* downloader = new QGCFileDownload(this);
     connect(downloader, &QGCFileDownload::downloadFinished, this, &APMAirframeComponentController::_paramFileDownloadFinished);
     connect(downloader, &QGCFileDownload::error, this, &APMAirframeComponentController::_paramFileDownloadError);
-    downloader->download(json["download_url"].toString());
+    downloader->download(json[QLatin1Literal("download_url")].toString());
 }
 
 void APMAirframeComponentController::_githubJsonDownloadError(QString errorMsg)

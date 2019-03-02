@@ -1,47 +1,74 @@
-import QtQuick                  2.5
-import QtQuick.Controls         1.2
+/****************************************************************************
+ *
+ *   (c) 2009-2016 QGROUNDCONTROL PROJECT <http://www.qgroundcontrol.org>
+ *
+ * QGroundControl is licensed according to the terms in the file
+ * COPYING.md in the root of the source code directory.
+ *
+ ****************************************************************************/
+
+import QtQuick          2.3
+import QtQuick.Controls 1.2
 
 import QGroundControl.Palette       1.0
 import QGroundControl.ScreenTools   1.0
 
-Rectangle
-{
-    id: __mapButton
+Rectangle {
+    id:             mapButton
+    anchors.margins: ScreenTools.defaultFontPixelWidth
+    color:          _showHighlight ? qgcPal.buttonHighlight : qgcPal.button
+    border.width:   _showBorder ? 1: 0
+    border.color:   qgcPal.buttonText
 
-    property var    __qgcPal: QGCPalette { colorGroupEnabled: enabled }
-    property bool   __showHighlight: (__pressed | __hovered | checked) && !__forceHoverOff
-
-    property bool   __forceHoverOff:    false
-    property int    __lastGlobalMouseX: 0
-    property int    __lastGlobalMouseY: 0
-    property bool   __pressed:          false
-    property bool   __hovered:          false
-
+    property var    tileSet:    null
+    property var    currentSet: null
     property bool   checked:    false
     property bool   complete:   false
     property alias  text:       nameLabel.text
     property int    tiles:      0
     property string size:       ""
 
+    property bool   _showHighlight: (_pressed | _hovered | checked) && !_forceHoverOff
+    property bool   _showBorder:    qgcPal.globalTheme === QGCPalette.Light
+
+    property bool   _forceHoverOff:    false
+    property int    _lastGlobalMouseX: 0
+    property int    _lastGlobalMouseY: 0
+    property bool   _pressed:          false
+    property bool   _hovered:          false
+
     signal clicked()
 
-    color:          __showHighlight ? __qgcPal.buttonHighlight : __qgcPal.button
-    anchors.margins: ScreenTools.defaultFontPixelWidth
+    property ExclusiveGroup exclusiveGroup:  null
+    onExclusiveGroupChanged: {
+        if (exclusiveGroup) {
+            checked = false
+            exclusiveGroup.bindCheckable(mapButton)
+        }
+    }
+    onCheckedChanged: {
+        if(checked) {
+            currentSet = tileSet
+        }
+    }
+
+    QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
+
     Row {
         anchors.centerIn: parent
         QGCLabel {
             id:     nameLabel
-            width:  __mapButton.width * 0.4
-            color:  __showHighlight ? __qgcPal.buttonHighlightText : __qgcPal.buttonText
+            width:  mapButton.width * 0.4
+            color:  _showHighlight ? qgcPal.buttonHighlightText : qgcPal.buttonText
             anchors.verticalCenter: parent.verticalCenter
         }
         QGCLabel {
             id:     sizeLabel
-            width:  __mapButton.width * 0.4
+            width:  mapButton.width * 0.4
             horizontalAlignment: Text.AlignRight
             anchors.verticalCenter: parent.verticalCenter
-            color:  __showHighlight ? __qgcPal.buttonHighlightText : __qgcPal.buttonText
-            text:   __mapButton.size + (tiles > 0 ? " (" + tiles + " tiles)" : "")
+            color:  _showHighlight ? qgcPal.buttonHighlightText : qgcPal.buttonText
+            text:   mapButton.size + (tiles > 0 ? " (" + tiles + " tiles)" : "")
         }
         Item {
             width:  ScreenTools.defaultFontPixelWidth * 2
@@ -66,40 +93,65 @@ Rectangle
             source:     "/res/buttonRight.svg"
             mipmap:     true
             fillMode:   Image.PreserveAspectFit
-            color:      __showHighlight ? __qgcPal.buttonHighlightText : __qgcPal.buttonText
+            color:      _showHighlight ? qgcPal.buttonHighlightText : qgcPal.buttonText
             anchors.verticalCenter: parent.verticalCenter
         }
     }
 
     MouseArea {
         anchors.fill: parent
-        hoverEnabled: true
+        hoverEnabled: !ScreenTools.isMobile
         onMouseXChanged: {
-            __lastGlobalMouseX = ScreenTools.mouseX()
-            __lastGlobalMouseY = ScreenTools.mouseY()
+            if(!ScreenTools.isMobile) {
+                _lastGlobalMouseX = ScreenTools.mouseX()
+                _lastGlobalMouseY = ScreenTools.mouseY()
+            }
         }
         onMouseYChanged: {
-            __lastGlobalMouseX = ScreenTools.mouseX()
-            __lastGlobalMouseY = ScreenTools.mouseY()
+            if(!ScreenTools.isMobile) {
+                _lastGlobalMouseX = ScreenTools.mouseX()
+                _lastGlobalMouseY = ScreenTools.mouseY()
+            }
         }
-        onEntered:  { __hovered = true;  __forceHoverOff = false; hoverTimer.start() }
-        onExited:   { __hovered = false; __forceHoverOff = false; hoverTimer.stop()  }
-        onPressed:  { __pressed = true;  }
-        onReleased: { __pressed = false; }
+        onEntered:  {
+            if(!ScreenTools.isMobile) {
+                _hovered = true
+                _forceHoverOff = false
+                hoverTimer.start()
+            }
+        }
+        onExited:   {
+            if(!ScreenTools.isMobile) {
+                _hovered = false
+                _forceHoverOff = false
+                hoverTimer.stop()
+            }
+        }
+        onPressed:  {
+            if(!ScreenTools.isMobile) {
+                _pressed = true
+            }
+        }
+        onReleased: {
+            if(!ScreenTools.isMobile) {
+                _pressed = false
+            }
+        }
         onClicked: {
-            __mapButton.clicked()
+            checked = true
+            mapButton.clicked()
         }
     }
 
     Timer {
         id:         hoverTimer
         interval:   250
-        repeat:     true
+        repeat:     !ScreenTools.isMobile
         onTriggered: {
-            if (__lastGlobalMouseX !== ScreenTools.mouseX() || __lastGlobalMouseY !== ScreenTools.mouseY()) {
-                __forceHoverOff = true
+            if (_lastGlobalMouseX !== ScreenTools.mouseX() || _lastGlobalMouseY !== ScreenTools.mouseY()) {
+                _forceHoverOff = true
             } else {
-                __forceHoverOff = false
+                _forceHoverOff = false
             }
         }
     }

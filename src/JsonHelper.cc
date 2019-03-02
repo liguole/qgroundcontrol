@@ -7,8 +7,9 @@
  *
  ****************************************************************************/
 
-
 #include "JsonHelper.h"
+#include "QGCQGeoCoordinate.h"
+#include "QmlObjectListModel.h"
 
 #include <QJsonArray>
 #include <QJsonParseError>
@@ -44,10 +45,11 @@ bool JsonHelper::validateRequiredKeys(const QJsonObject& jsonObject, const QStri
     return true;
 }
 
-bool JsonHelper::loadGeoCoordinate(const QJsonValue&    jsonValue,
-                                   bool                 altitudeRequired,
-                                   QGeoCoordinate&      coordinate,
-                                   QString&             errorString)
+bool JsonHelper::_loadGeoCoordinate(const QJsonValue&   jsonValue,
+                                    bool                altitudeRequired,
+                                    QGeoCoordinate&     coordinate,
+                                    QString&            errorString,
+                                    bool                geoJsonFormat)
 {
     if (!jsonValue.isArray()) {
         errorString = QObject::tr("value for coordinate is not array");
@@ -62,32 +64,36 @@ bool JsonHelper::loadGeoCoordinate(const QJsonValue&    jsonValue,
     }
 
     foreach(const QJsonValue& jsonValue, coordinateArray) {
-        if (jsonValue.type() != QJsonValue::Double) {
+        if (jsonValue.type() != QJsonValue::Double && jsonValue.type() != QJsonValue::Null) {
             errorString = QObject::tr("Coordinate array may only contain double values, found: %1").arg(jsonValue.type());
             return false;
         }
     }
 
-    coordinate = QGeoCoordinate(coordinateArray[0].toDouble(), coordinateArray[1].toDouble());
-    if (altitudeRequired) {
-        coordinate.setAltitude(coordinateArray[2].toDouble());
+    if (geoJsonFormat) {
+        coordinate = QGeoCoordinate(coordinateArray[1].toDouble(), coordinateArray[0].toDouble());
+    } else {
+        coordinate = QGeoCoordinate(possibleNaNJsonValue(coordinateArray[0]), possibleNaNJsonValue(coordinateArray[1]));
     }
-
-    if (!coordinate.isValid()) {
-        errorString = QObject::tr("Coordinate is invalid: %1").arg(coordinate.toString());
-        return false;
+    if (altitudeRequired) {
+        coordinate.setAltitude(possibleNaNJsonValue(coordinateArray[2]));
     }
 
     return true;
 }
 
-void JsonHelper::saveGeoCoordinate(const QGeoCoordinate&    coordinate,
-                                   bool                     writeAltitude,
-                                   QJsonValue&              jsonValue)
+void JsonHelper::_saveGeoCoordinate(const QGeoCoordinate&   coordinate,
+                                    bool                    writeAltitude,
+                                    QJsonValue&             jsonValue,
+                                    bool                    geoJsonFormat)
 {
     QJsonArray coordinateArray;
 
-    coordinateArray << coordinate.latitude() << coordinate.longitude();
+    if (geoJsonFormat) {
+        coordinateArray << coordinate.longitude() << coordinate.latitude();
+    } else {
+        coordinateArray << coordinate.latitude() << coordinate.longitude();
+    }
     if (writeAltitude) {
         coordinateArray << coordinate.altitude();
     }
@@ -95,12 +101,49 @@ void JsonHelper::saveGeoCoordinate(const QGeoCoordinate&    coordinate,
     jsonValue = QJsonValue(coordinateArray);
 }
 
+bool JsonHelper::loadGeoCoordinate(const QJsonValue&    jsonValue,
+                                   bool                 altitudeRequired,
+                                   QGeoCoordinate&      coordinate,
+                                   QString&             errorString,
+                                   bool                 geoJsonFormat)
+{
+    return _loadGeoCoordinate(jsonValue, altitudeRequired, coordinate, errorString, geoJsonFormat);
+}
+
+void JsonHelper::saveGeoCoordinate(const QGeoCoordinate&    coordinate,
+                                   bool                     writeAltitude,
+                                   QJsonValue&              jsonValue)
+{
+    _saveGeoCoordinate(coordinate, writeAltitude, jsonValue, false /* geoJsonFormat */);
+}
+
+bool JsonHelper::loadGeoJsonCoordinate(const QJsonValue& jsonValue,
+                                       bool              altitudeRequired,
+                                       QGeoCoordinate&   coordinate,
+                                       QString&          errorString)
+{
+    return _loadGeoCoordinate(jsonValue, altitudeRequired, coordinate, errorString, true /* geoJsonFormat */);
+}
+
+void JsonHelper::saveGeoJsonCoordinate(const QGeoCoordinate& coordinate,
+                                       bool                  writeAltitude,
+                                       QJsonValue&           jsonValue)
+{
+    _saveGeoCoordinate(coordinate, writeAltitude, jsonValue, true /* geoJsonFormat */);
+}
+
 bool JsonHelper::validateKeyTypes(const QJsonObject& jsonObject, const QStringList& keys, const QList<QJsonValue::Type>& types, QString& errorString)
 {
-    for (int i=0; i<keys.count(); i++) {
-        if (jsonObject.contains(keys[i])) {
-            if (jsonObject.value(keys[i]).type() != types[i]) {
-                errorString  = QObject::tr("Incorrect type key:type:expected %1 %2 %3").arg(keys[i]).arg(jsonObject.value(keys[i]).type()).arg(types[i]);
+    for (int i=0; i<types.count(); i++) {
+        QString valueKey = keys[i];
+        if (jsonObject.contains(valueKey)) {
+            const QJsonValue& jsonValue = jsonObject[valueKey];
+            if (jsonValue.type() == QJsonValue::Null &&  types[i] == QJsonValue::Double) {
+                // Null type signals a NaN on a double value
+                continue;
+            }
+            if (jsonValue.type() != types[i]) {
+                errorString  = QObject::tr("Incorrect value type - key:type:expected %1:%2:%3").arg(valueKey).arg(_jsonValueTypeToString(jsonValue.type())).arg(_jsonValueTypeToString(types[i]));
                 return false;
             }
         }
@@ -109,46 +152,78 @@ bool JsonHelper::validateKeyTypes(const QJsonObject& jsonObject, const QStringLi
     return true;
 }
 
-bool JsonHelper::parseEnum(const QJsonObject& jsonObject, QStringList& enumStrings, QStringList& enumValues, QString& errorString)
+bool JsonHelper::_parseEnumWorker(const QJsonObject& jsonObject, QMap<QString, QString>& defineMap, QStringList& enumStrings, QStringList& enumValues, QString& errorString, QString valueName)
 {
-    enumStrings = jsonObject.value(_enumStringsJsonKey).toString().split(",", QString::SkipEmptyParts);
-    enumValues = jsonObject.value(_enumValuesJsonKey).toString().split(",", QString::SkipEmptyParts);
+    if(jsonObject.value(_enumStringsJsonKey).isArray()) {
+        // "enumStrings": ["Auto" , "Manual", "Shutter Priority", "Aperture Priority"],
+        QJsonArray jArray = jsonObject.value(_enumStringsJsonKey).toArray();
+        for(int i = 0; i < jArray.count(); ++i) {
+            enumStrings << jArray.at(i).toString();
+        }
+    } else {
+        // "enumStrings": "Auto,Manual,Shutter Priority,Aperture Priority",
+        QString value = jsonObject.value(_enumStringsJsonKey).toString();
+        enumStrings = defineMap.value(value, value).split(",", QString::SkipEmptyParts);
+    }
+
+    if(jsonObject.value(_enumValuesJsonKey).isArray()) {
+        // "enumValues": [0, 1, 2, 3, 4, 5],
+        QJsonArray jArray = jsonObject.value(_enumValuesJsonKey).toArray();
+        // This should probably be a variant list and not a string list.
+        for(int i = 0; i < jArray.count(); ++i) {
+            if(jArray.at(i).isString())
+                enumValues << jArray.at(i).toString();
+            else
+                enumValues << QString::number(jArray.at(i).toDouble());
+        }
+    } else {
+        // "enumValues": "0,1,2,3,4,5",
+        QString value = jsonObject.value(_enumValuesJsonKey).toString();
+        enumValues = defineMap.value(value, value).split(",", QString::SkipEmptyParts);
+    }
 
     if (enumStrings.count() != enumValues.count()) {
-        errorString = QObject::tr("enum strings/values count mismatch strings:values %1:%2").arg(enumStrings.count()).arg(enumValues.count());
+        errorString = QObject::tr("enum strings/values count mismatch in %3 strings:values %1:%2").arg(enumStrings.count()).arg(enumValues.count()).arg(valueName);
         return false;
     }
 
     return true;
 }
 
-bool JsonHelper::isJsonFile(const QByteArray& bytes, QJsonDocument& jsonDoc)
+bool JsonHelper::parseEnum(const QJsonObject& jsonObject, QMap<QString, QString>& defineMap, QStringList& enumStrings, QStringList& enumValues, QString& errorString, QString valueName)
 {
-    QJsonParseError error;
+    return _parseEnumWorker(jsonObject, defineMap, enumStrings, enumValues, errorString, valueName);
+}
 
-    jsonDoc = QJsonDocument::fromJson(bytes, &error);
+bool JsonHelper::parseEnum(const QJsonObject& jsonObject, QStringList& enumStrings, QStringList& enumValues, QString& errorString, QString valueName)
+{
+    QMap<QString, QString> defineMap;
+    return _parseEnumWorker(jsonObject, defineMap, enumStrings, enumValues, errorString, valueName);
+}
 
-    if (error.error == QJsonParseError::NoError) {
+bool JsonHelper::isJsonFile(const QByteArray& bytes, QJsonDocument& jsonDoc, QString& errorString)
+{
+    QJsonParseError parseError;
+
+    jsonDoc = QJsonDocument::fromJson(bytes, &parseError);
+
+    if (parseError.error == QJsonParseError::NoError) {
         return true;
-    }
-
-    if (error.error == QJsonParseError::MissingObject && error.offset == 0) {
+    } else {
+        errorString = parseError.errorString();
         return false;
     }
-
-    return true;
 }
 
 bool JsonHelper::validateQGCJsonFile(const QJsonObject& jsonObject,
                                      const QString&     expectedFileType,
-                                     int                supportedMajorVersion,
-                                     int                supportedMinorVersion,
-                                     int&               fileMajorVersion,
-                                     int&               fileMinorVersion,
+                                     int                minSupportedVersion,
+                                     int                maxSupportedVersion,
+                                     int&               version,
                                      QString&           errorString)
 {
     // Check for required keys
-    QStringList requiredKeys = { jsonVersionKey, jsonFileTypeKey };
+    QStringList requiredKeys = { jsonFileTypeKey, jsonGroundStationKey, jsonVersionKey };
     if (!validateRequiredKeys(jsonObject, requiredKeys, errorString)) {
         return false;
     }
@@ -166,29 +241,37 @@ bool JsonHelper::validateQGCJsonFile(const QJsonObject& jsonObject,
         return false;
     }
 
-    // Parse and validate version
+    // Check version - support both old style v1 string and new style integer
 
-    QString incorrectVersionFormatErrorString = QObject::tr("Incorrectly formatted version value");
-    QRegularExpression versionRegExp("(\\d+).(\\d+)");
-    QRegularExpressionMatch match = versionRegExp.match(jsonObject[jsonVersionKey].toString());
-    if (!match.hasMatch()) {
-        errorString = incorrectVersionFormatErrorString;
+    QJsonValue versionValue = jsonObject[jsonVersionKey];
+    if (versionValue.type() == QJsonValue::String && versionValue.toString() == QStringLiteral("1.0")) {
+        version = 1;
+    } else {
+        if (versionValue.type() != QJsonValue::Double) {
+            errorString = QObject::tr("Incorrect type for version value, must be integer");
+            return false;
+        }
+        version = versionValue.toInt();
+    }
+    if (version < minSupportedVersion) {
+        errorString = QObject::tr("File version %1 is no longer supported").arg(version);
         return false;
     }
-    QStringList versionParts = match.capturedTexts();
-    if (versionParts.count() != 3) {
-        errorString = incorrectVersionFormatErrorString;
-        return false;
-    }
-
-    fileMajorVersion = versionParts[0].toInt();
-    fileMinorVersion = versionParts[0].toInt();
-    if (fileMajorVersion > supportedMajorVersion || (fileMajorVersion == supportedMajorVersion && fileMinorVersion > supportedMinorVersion)) {
-        errorString = QObject::tr("File version (%1.%2) is larger than current supported version (%3.%4)").arg(fileMajorVersion).arg(fileMinorVersion).arg(supportedMajorVersion).arg(supportedMinorVersion);
+    if (version > maxSupportedVersion) {
+        errorString = QObject::tr("File version %1 is newer than current supported version %2").arg(version).arg(maxSupportedVersion);
         return false;
     }
 
     return true;
+}
+
+void JsonHelper::saveQGCJsonFileHeader(QJsonObject&     jsonObject,
+                                       const QString&   fileType,
+                                       int              version)
+{
+    jsonObject[jsonGroundStationKey] = jsonGroundStationValue;
+    jsonObject[jsonFileTypeKey] = fileType;
+    jsonObject[jsonVersionKey] = version;
 }
 
 bool JsonHelper::loadGeoCoordinateArray(const QJsonValue&   jsonValue,
@@ -283,4 +366,64 @@ bool JsonHelper::validateKeys(const QJsonObject& jsonObject, const QList<JsonHel
         typeList.append(keyInfo[i].type);
     }
     return validateKeyTypes(jsonObject, keyList, typeList, errorString);
+}
+
+QString JsonHelper::_jsonValueTypeToString(QJsonValue::Type type)
+{
+    const struct {
+        QJsonValue::Type    type;
+        const char*         string;
+    } rgTypeToString[] = {
+    { QJsonValue::Null,         "NULL" },
+    { QJsonValue::Bool,         "Bool" },
+    { QJsonValue::Double,       "Double" },
+    { QJsonValue::String,       "String" },
+    { QJsonValue::Array,        "Array" },
+    { QJsonValue::Object,       "Object" },
+    { QJsonValue::Undefined,    "Undefined" },
+};
+
+    for (size_t i=0; i<sizeof(rgTypeToString)/sizeof(rgTypeToString[0]); i++) {
+        if (type == rgTypeToString[i].type) {
+            return rgTypeToString[i].string;
+        }
+    }
+
+    return QObject::tr("Unknown type: %1").arg(type);
+}
+
+bool JsonHelper::loadPolygon(const QJsonArray& polygonArray, QmlObjectListModel& list, QObject* parent, QString& errorString)
+{
+    for (int i=0; i<polygonArray.count(); i++) {
+        const QJsonValue& pointValue = polygonArray[i];
+
+        QGeoCoordinate pointCoord;
+        if (!JsonHelper::loadGeoCoordinate(pointValue, false /* altitudeRequired */, pointCoord, errorString, true)) {
+            list.clearAndDeleteContents();
+            return false;
+        }
+        list.append(new QGCQGeoCoordinate(pointCoord, parent));
+    }
+
+    return true;
+}
+
+void JsonHelper::savePolygon(QmlObjectListModel& list, QJsonArray& polygonArray)
+{
+    for (int i=0; i<list.count(); i++) {
+        QGeoCoordinate vertex = list.value<QGCQGeoCoordinate*>(i)->coordinate();
+
+        QJsonValue jsonValue;
+        JsonHelper::saveGeoCoordinate(vertex, false /* writeAltitude */, jsonValue);
+        polygonArray.append(jsonValue);
+    }
+}
+
+double JsonHelper::possibleNaNJsonValue(const  QJsonValue& value)
+{
+    if (value.type() == QJsonValue::Null) {
+        return std::numeric_limits<double>::quiet_NaN();
+    } else {
+        return value.toDouble();
+    }
 }

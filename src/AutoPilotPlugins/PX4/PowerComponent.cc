@@ -43,7 +43,6 @@ bool PowerComponent::requiresSetup(void) const
 
 bool PowerComponent::setupComplete(void) const
 {
-    QVariant cvalue, evalue, nvalue;
     return _vehicle->parameterManager()->getParameter(FactSystem::defaultComponentId, "BAT_V_CHARGED")->rawValue().toFloat() != 0.0f &&
         _vehicle->parameterManager()->getParameter(FactSystem::defaultComponentId, "BAT_V_EMPTY")->rawValue().toFloat() != 0.0f &&
         _vehicle->parameterManager()->getParameter(FactSystem::defaultComponentId, "BAT_N_CELLS")->rawValue().toInt() != 0;
@@ -65,14 +64,4 @@ QUrl PowerComponent::setupSource(void) const
 QUrl PowerComponent::summaryQmlSource(void) const
 {
     return QUrl::fromUserInput("qrc:/qml/PowerComponentSummary.qml");
-}
-
-QString PowerComponent::prerequisiteSetup(void) const
-{
-    PX4AutoPilotPlugin* plugin = dynamic_cast<PX4AutoPilotPlugin*>(_autopilot);
-    Q_ASSERT(plugin);
-    if (!plugin->airframeComponent()->setupComplete()) {
-        return plugin->airframeComponent()->name();
-    }
-    return QString();
 }

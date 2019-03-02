@@ -1,40 +1,55 @@
-import QtQuick 2.2
-import QtQuick.Controls 1.2
-import QtQuick.Controls.Styles 1.2
+import QtQuick                  2.3
+import QtQuick.Controls         1.2
+import QtQuick.Controls.Styles  1.4
 
-import QGroundControl.Palette 1.0
-import QGroundControl.ScreenTools 1.0
+import QGroundControl.Palette       1.0
+import QGroundControl.ScreenTools   1.0
 
 RadioButton {
-    property var color: _qgcPal.text    ///< Text color
+    property color  textColor:          _qgcPal.text
+    property bool   textBold:           false
+    property real   textFontPointSize:  ScreenTools.defaultFontPointSize
 
-    property var _qgcPal: QGCPalette { colorGroupEnabled: enabled }
+    property var    _qgcPal:             QGCPalette { colorGroupEnabled: enabled }
+
+    property bool _noText: text === ""
+
+    activeFocusOnPress: true
 
     style: RadioButtonStyle {
+        spacing: _noText ? 0 : ScreenTools.defaultFontPixelWidth / 2
+
         label: Item {
-            implicitWidth:          text.implicitWidth + ScreenTools.defaultFontPixelWidth * 0.25
-            implicitHeight:         text.implicitHeight
+            implicitWidth:          _noText ? 0 : text.implicitWidth + ScreenTools.defaultFontPixelWidth * 0.25
+            implicitHeight:         _noText ? 0 : Math.max(text.implicitHeight, ScreenTools.radioButtonIndicatorSize)
             baselineOffset:         text.y + text.baselineOffset
-            Rectangle {
-                anchors.fill:       text
-                anchors.margins:    -1
-                anchors.leftMargin: -3
-                anchors.rightMargin:-3
-                visible:            control.activeFocus
-                height:             ScreenTools.defaultFontPixelWidth * 0.25
-                radius:             height * 0.5
-                color:              "#224f9fef"
-                border.color:       "#47b"
-                opacity:            0.6
-            }
+
             Text {
                 id:                 text
                 text:               control.text
-                font.pointSize:     ScreenTools.defaultFontPointSize
-                font.family:        ScreenTools.normalFontFamily
-                antialiasing:       true
-                color:              control.color
+                font.pointSize:     textFontPointSize
+                font.bold:          control.textBold
+                color:              control.textColor
                 anchors.centerIn:   parent
+            }
+        }
+
+        indicator: Rectangle {
+            width:          ScreenTools.radioButtonIndicatorSize
+            height:         width
+            color:          "white"
+            border.color:   "black"
+            radius:         height / 2
+            opacity:        control.enabled ? 1 : 0.5
+
+            Rectangle {
+                anchors.centerIn:   parent
+                width:              Math.round(parent.width * 0.5)
+                height:             width
+                antialiasing:       true
+                radius:             height / 2
+                color:              "black"
+                visible:            control.checked
             }
         }
     }

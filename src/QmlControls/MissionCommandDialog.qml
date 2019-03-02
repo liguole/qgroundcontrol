@@ -8,8 +8,8 @@
  ****************************************************************************/
 
 
-import QtQuick                  2.5
-import QtQuick.Controls         1.4
+import QtQuick                  2.3
+import QtQuick.Controls         1.2
 
 import QGroundControl               1.0
 import QGroundControl.Controls      1.0
@@ -68,7 +68,7 @@ QGCViewDialog {
             color:  qgcPal.button
 
             property var    mavCmdInfo: modelData
-            property var    textColor:  qgcPal.buttonText
+            property color  textColor:  qgcPal.buttonText
 
             Column {
                 id:                 commandColumn

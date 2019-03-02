@@ -27,15 +27,17 @@ class FollowMe : public QGCTool
     Q_OBJECT
 
 public:
-    FollowMe(QGCApplication* app);
-    ~FollowMe();
+    FollowMe(QGCApplication* app, QGCToolbox* toolbox);
+
+    void setToolbox(QGCToolbox* toolbox) override;
 
 public slots:
-    void followMeHandleManager(const QString&);
+    void followMeHandleManager  (const QString&);
 
 private slots:
-    void _setGPSLocation(QGeoPositionInfo geoPositionInfo);
-    void _sendGCSMotionReport(void);
+    void _setGPSLocation        (QGeoPositionInfo geoPositionInfo);
+    void _sendGCSMotionReport   ();
+    void _settingsChanged       ();
 
 private:
     QElapsedTimer runTime;    
@@ -66,8 +68,16 @@ private:
 
     uint8_t estimatation_capabilities;
 
-    void _disable();
-    void _enable();
+    void    _disable    ();
+    void    _enable     ();
 
-    double _degreesToRadian(double deg);
+    double  _degreesToRadian(double deg);
+
+    enum {
+        MODE_NEVER,
+        MODE_ALWAYS,
+        MODE_FOLLOWME
+    };
+
+    uint32_t _currentMode;
 };

@@ -1,6 +1,6 @@
-import QtQuick 2.2
+import QtQuick 2.3
 import QtQuick.Controls 1.2
-import QtQuick.Controls.Styles 1.2
+import QtQuick.Controls.Styles 1.4
 
 import QGroundControl.FactSystem 1.0
 import QGroundControl.Palette 1.0
@@ -8,15 +8,13 @@ import QGroundControl.Controls 1.0
 
 QGCCheckBox {
     property Fact fact: Fact { }
-    property variant checkedValue: 1
+    property variant checkedValue:   1
     property variant uncheckedValue: 0
+    checkedState: fact ?
+                      (fact.typeIsBool ?
+                           (fact.value === false ? Qt.Unchecked : Qt.Checked) :
+                           (fact.value === 0 ? Qt.Unchecked : Qt.Checked)) :
+                      Qt.Unchecked
 
-    partiallyCheckedEnabled: fact ? fact.value !== checkedValue && fact.value !== uncheckedValue : false
-    checkedState: fact ? fact.value === checkedValue ? Qt.Checked : (fact.value === uncheckedValue ? Qt.Unchecked : Qt.PartiallyChecked) : false
-
-    text: qsTr("Label")
-
-    onClicked: {
-        fact.value = checked ? checkedValue : uncheckedValue
-    }
+    onClicked: fact.value = (checked ? checkedValue : uncheckedValue)
 }

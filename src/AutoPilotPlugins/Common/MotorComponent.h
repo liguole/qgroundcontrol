@@ -30,9 +30,8 @@ public:
     QString iconResource(void) const final;
     bool requiresSetup(void) const final;
     bool setupComplete(void) const final;
-    QUrl setupSource(void) const final;
+    virtual QUrl setupSource(void) const;
     QUrl summaryQmlSource(void) const final;
-    QString prerequisiteSetup(void) const final;
 
 private:
     const QString   _name;

@@ -11,6 +11,11 @@
 /// @file
 ///     @author Gus Grubba <mavlink@grubba.com>
 
+#if !defined(__mobile__)
+#include "QGCQFileDialog.h"
+#include "MainWindow.h"
+#endif
+
 #include "QGCMapEngineManager.h"
 #include "QGCApplication.h"
 #include "QGCMapTileSet.h"
@@ -25,8 +30,8 @@ QGC_LOGGING_CATEGORY(QGCMapEngineManagerLog, "QGCMapEngineManagerLog")
 static const char* kQmlOfflineMapKeyName = "QGCOfflineMap";
 
 //-----------------------------------------------------------------------------
-QGCMapEngineManager::QGCMapEngineManager(QGCApplication* app)
-    : QGCTool(app)
+QGCMapEngineManager::QGCMapEngineManager(QGCApplication* app, QGCToolbox* toolbox)
+    : QGCTool(app, toolbox)
     , _topleftLat(0.0)
     , _topleftLon(0.0)
     , _bottomRightLat(0.0)
@@ -36,6 +41,10 @@ QGCMapEngineManager::QGCMapEngineManager(QGCApplication* app)
     , _setID(UINT64_MAX)
     , _freeDiskSpace(0)
     , _diskSpace(0)
+    , _fetchElevation(true)
+    , _actionProgress(0)
+    , _importAction(ActionNone)
+    , _importReplace(false)
 {
 
 }
@@ -69,15 +78,19 @@ QGCMapEngineManager::updateForCurrentView(double lon0, double lat0, double lon1,
     _bottomRightLon = lon1;
     _minZoom        = minZoom;
     _maxZoom        = maxZoom;
-    _totalSet.clear();
+
+    _imageSet.clear();
+    _elevationSet.clear();
+
     for(int z = minZoom; z <= maxZoom; z++) {
         QGCTileSet set = QGCMapEngine::getTileCount(z, lon0, lat0, lon1, lat1, mapType);
-        _totalSet += set;
+        _imageSet += set;
     }
-    emit tileX0Changed();
-    emit tileX1Changed();
-    emit tileY0Changed();
-    emit tileY1Changed();
+    if (_fetchElevation) {
+        QGCTileSet set = QGCMapEngine::getTileCount(1, lon0, lat0, lon1, lat1, UrlFactory::AirmapElevation);
+        _elevationSet += set;
+    }
+
     emit tileCountChanged();
     emit tileSizeChanged();
 
@@ -88,14 +101,14 @@ QGCMapEngineManager::updateForCurrentView(double lon0, double lat0, double lon1,
 QString
 QGCMapEngineManager::tileCountStr()
 {
-    return QGCMapEngine::numberToString(_totalSet.tileCount);
+    return QGCMapEngine::numberToString(_imageSet.tileCount + _elevationSet.tileCount);
 }
 
 //-----------------------------------------------------------------------------
 QString
 QGCMapEngineManager::tileSizeStr()
 {
-    return QGCMapEngine::bigSizeToString(_totalSet.tileSize);
+    return QGCMapEngine::bigSizeToString(_imageSet.tileSize + _elevationSet.tileSize);
 }
 
 //-----------------------------------------------------------------------------
@@ -129,7 +142,7 @@ QGCMapEngineManager::_tileSetFetched(QGCCachedTileSet* tileSet)
 void
 QGCMapEngineManager::startDownload(const QString& name, const QString& mapType)
 {
-    if(_totalSet.tileSize) {
+    if(_imageSet.tileSize) {
         QGCCachedTileSet* set = new QGCCachedTileSet(name);
         set->setMapTypeStr(mapType);
         set->setTopleftLat(_topleftLat);
@@ -138,9 +151,29 @@ QGCMapEngineManager::startDownload(const QString& name, const QString& mapType)
         set->setBottomRightLon(_bottomRightLon);
         set->setMinZoom(_minZoom);
         set->setMaxZoom(_maxZoom);
-        set->setTotalTileSize(_totalSet.tileSize);
-        set->setTotalTileCount(_totalSet.tileCount);
+        set->setTotalTileSize(_imageSet.tileSize);
+        set->setTotalTileCount(_imageSet.tileCount);
         set->setType(QGCMapEngine::getTypeFromName(mapType));
+        QGCCreateTileSetTask* task = new QGCCreateTileSetTask(set);
+        //-- Create Tile Set (it will also create a list of tiles to download)
+        connect(task, &QGCCreateTileSetTask::tileSetSaved, this, &QGCMapEngineManager::_tileSetSaved);
+        connect(task, &QGCMapTask::error, this, &QGCMapEngineManager::taskError);
+        getQGCMapEngine()->addTask(task);
+    } else {
+        qWarning() <<  "QGCMapEngineManager::startDownload() No Tiles to save";
+    }
+    if (mapType != "Airmap Elevation Data" && _fetchElevation) {
+        QGCCachedTileSet* set = new QGCCachedTileSet(name + " Elevation");
+        set->setMapTypeStr("Airmap Elevation Data");
+        set->setTopleftLat(_topleftLat);
+        set->setTopleftLon(_topleftLon);
+        set->setBottomRightLat(_bottomRightLat);
+        set->setBottomRightLon(_bottomRightLon);
+        set->setMinZoom(1);
+        set->setMaxZoom(1);
+        set->setTotalTileSize(_elevationSet.tileSize);
+        set->setTotalTileCount(_elevationSet.tileCount);
+        set->setType(QGCMapEngine::getTypeFromName("Airmap Elevation Data"));
         QGCCreateTileSetTask* task = new QGCCreateTileSetTask(set);
         //-- Create Tile Set (it will also create a list of tiles to download)
         connect(task, &QGCCreateTileSetTask::tileSetSaved, this, &QGCMapEngineManager::_tileSetSaved);
@@ -188,20 +221,6 @@ QGCMapEngineManager::mapList()
 }
 
 //-----------------------------------------------------------------------------
-QString
-QGCMapEngineManager::mapboxToken()
-{
-    return getQGCMapEngine()->getMapBoxToken();
-}
-
-//-----------------------------------------------------------------------------
-void
-QGCMapEngineManager::setMapboxToken(QString token)
-{
-    getQGCMapEngine()->setMapBoxToken(token);
-}
-
-//-----------------------------------------------------------------------------
 quint32
 QGCMapEngineManager::maxMemCache()
 {
@@ -238,8 +257,9 @@ QGCMapEngineManager::deleteTileSet(QGCCachedTileSet* tileSet)
     if(tileSet->defaultSet()) {
         for(int i = 0; i < _tileSets.count(); i++ ) {
             QGCCachedTileSet* set = qobject_cast<QGCCachedTileSet*>(_tileSets.get(i));
-            Q_ASSERT(set);
-            set->setDeleting(true);
+            if(set) {
+                set->setDeleting(true);
+            }
         }
         QGCResetTask* task = new QGCResetTask();
         connect(task, &QGCResetTask::resetCompleted, this, &QGCMapEngineManager::_resetCompleted);
@@ -252,6 +272,24 @@ QGCMapEngineManager::deleteTileSet(QGCCachedTileSet* tileSet)
         connect(task, &QGCMapTask::error, this, &QGCMapEngineManager::taskError);
         getQGCMapEngine()->addTask(task);
     }
+}
+
+//-----------------------------------------------------------------------------
+void
+QGCMapEngineManager::renameTileSet(QGCCachedTileSet* tileSet, QString newName)
+{
+    //-- Name must be unique
+    int idx = 1;
+    QString name = newName;
+    while(findName(name)) {
+        name = QString("%1 (%2)").arg(newName).arg(idx++);
+    }
+    qCDebug(QGCMapEngineManagerLog) << "Renaming tile set " << tileSet->name() << "to" << name;
+    tileSet->setName(name);
+    QGCRenameTileSetTask* task = new QGCRenameTileSetTask(tileSet->setID(), name);
+    connect(task, &QGCMapTask::error, this, &QGCMapEngineManager::taskError);
+    getQGCMapEngine()->addTask(task);
+    emit tileSet->nameChanged();
 }
 
 //-----------------------------------------------------------------------------
@@ -271,8 +309,7 @@ QGCMapEngineManager::_tileSetDeleted(quint64 setID)
     int i = 0;
     for(i = 0; i < _tileSets.count(); i++ ) {
         QGCCachedTileSet* set = qobject_cast<QGCCachedTileSet*>(_tileSets.get(i));
-        Q_ASSERT(set);
-        if (set->setID() == setID) {
+        if (set && set->setID() == setID) {
             setToDelete = set;
             break;
         }
@@ -308,6 +345,9 @@ QGCMapEngineManager::taskError(QGCMapTask::TaskType type, QString error)
     case QGCMapTask::taskReset:
         task = "Reset Tile Sets";
         break;
+    case QGCMapTask::taskExport:
+        task = "Export Tile Sets";
+        break;
     default:
         task = "Database Error";
         break;
@@ -325,8 +365,7 @@ QGCMapEngineManager::_updateTotals(quint32 totaltiles, quint64 totalsize, quint3
 {
     for(int i = 0; i < _tileSets.count(); i++ ) {
         QGCCachedTileSet* set = qobject_cast<QGCCachedTileSet*>(_tileSets.get(i));
-        Q_ASSERT(set);
-        if (set->defaultSet()) {
+        if (set && set->defaultSet()) {
             set->setSavedTileSize(totalsize);
             set->setSavedTileCount(totaltiles);
             set->setTotalTileCount(defaulttiles);
@@ -343,12 +382,147 @@ QGCMapEngineManager::findName(const QString& name)
 {
     for(int i = 0; i < _tileSets.count(); i++ ) {
         QGCCachedTileSet* set = qobject_cast<QGCCachedTileSet*>(_tileSets.get(i));
-        Q_ASSERT(set);
-        if (set->name() == name) {
+        if (set && set->name() == name) {
             return true;
         }
     }
     return false;
+}
+
+//-----------------------------------------------------------------------------
+void
+QGCMapEngineManager::selectAll() {
+    for(int i = 0; i < _tileSets.count(); i++ ) {
+        QGCCachedTileSet* set = qobject_cast<QGCCachedTileSet*>(_tileSets.get(i));
+        if(set) {
+            set->setSelected(true);
+        }
+    }
+}
+
+//-----------------------------------------------------------------------------
+void
+QGCMapEngineManager::selectNone() {
+    for(int i = 0; i < _tileSets.count(); i++ ) {
+        QGCCachedTileSet* set = qobject_cast<QGCCachedTileSet*>(_tileSets.get(i));
+        if(set) {
+            set->setSelected(false);
+        }
+    }
+}
+
+//-----------------------------------------------------------------------------
+int
+QGCMapEngineManager::selectedCount() {
+    int count = 0;
+    for(int i = 0; i < _tileSets.count(); i++ ) {
+        QGCCachedTileSet* set = qobject_cast<QGCCachedTileSet*>(_tileSets.get(i));
+        if(set && set->selected()) {
+            count++;
+        }
+    }
+    return count;
+}
+
+//-----------------------------------------------------------------------------
+bool
+QGCMapEngineManager::importSets(QString path) {
+    _importAction = ActionNone;
+    emit importActionChanged();
+    QString dir = path;
+    if(dir.isEmpty()) {
+#if defined(__mobile__)
+        //-- TODO: This has to be something fixed
+        dir = QDir(QDir::homePath()).filePath(QString("export_%1.db").arg(QDateTime::currentDateTime().toTime_t()));
+#else
+        dir = QGCQFileDialog::getOpenFileName(
+            NULL,
+            "Import Tile Set",
+            QDir::homePath(),
+            "Tile Sets (*.qgctiledb)");
+#endif
+    }
+    if(!dir.isEmpty()) {
+        _importAction = ActionImporting;
+        emit importActionChanged();
+        QGCImportTileTask* task = new QGCImportTileTask(dir, _importReplace);
+        connect(task, &QGCImportTileTask::actionCompleted, this, &QGCMapEngineManager::_actionCompleted);
+        connect(task, &QGCImportTileTask::actionProgress, this, &QGCMapEngineManager::_actionProgressHandler);
+        connect(task, &QGCMapTask::error, this, &QGCMapEngineManager::taskError);
+        getQGCMapEngine()->addTask(task);
+        return true;
+    }
+    return false;
+}
+
+//-----------------------------------------------------------------------------
+bool
+QGCMapEngineManager::exportSets(QString path) {
+    _importAction = ActionNone;
+    emit importActionChanged();
+    QString dir = path;
+    if(dir.isEmpty()) {
+#if defined(__mobile__)
+        dir = QDir(QDir::homePath()).filePath(QString("export_%1.db").arg(QDateTime::currentDateTime().toTime_t()));
+#else
+        dir = QGCQFileDialog::getSaveFileName(
+            MainWindow::instance(),
+            "Export Tile Set",
+            QDir::homePath(),
+            "Tile Sets (*.qgctiledb)",
+            "qgctiledb",
+            true);
+#endif
+    }
+    if(!dir.isEmpty()) {
+        QVector<QGCCachedTileSet*> sets;
+        for(int i = 0; i < _tileSets.count(); i++ ) {
+            QGCCachedTileSet* set = qobject_cast<QGCCachedTileSet*>(_tileSets.get(i));
+            if(set->selected()) {
+                sets.append(set);
+            }
+        }
+        if(sets.count()) {
+            _importAction = ActionExporting;
+            emit importActionChanged();
+            QGCExportTileTask* task = new QGCExportTileTask(sets, dir);
+            connect(task, &QGCExportTileTask::actionCompleted, this, &QGCMapEngineManager::_actionCompleted);
+            connect(task, &QGCExportTileTask::actionProgress, this, &QGCMapEngineManager::_actionProgressHandler);
+            connect(task, &QGCMapTask::error, this, &QGCMapEngineManager::taskError);
+            getQGCMapEngine()->addTask(task);
+            return true;
+        }
+    }
+    return false;
+}
+
+//-----------------------------------------------------------------------------
+void
+QGCMapEngineManager::_actionProgressHandler(int percentage)
+{
+    _actionProgress = percentage;
+    emit actionProgressChanged();
+}
+
+//-----------------------------------------------------------------------------
+void
+QGCMapEngineManager::_actionCompleted()
+{
+    ImportAction oldState = _importAction;
+    _importAction = ActionDone;
+    emit importActionChanged();
+    //-- If we just imported, reload it all
+    if(oldState == ActionImporting) {
+        loadTileSets();
+    }
+}
+
+//-----------------------------------------------------------------------------
+void
+QGCMapEngineManager::resetAction()
+{
+    _importAction = ActionNone;
+    emit importActionChanged();
 }
 
 //-----------------------------------------------------------------------------

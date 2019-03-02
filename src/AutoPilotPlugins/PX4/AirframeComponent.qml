@@ -8,9 +8,9 @@
  ****************************************************************************/
 
 
-import QtQuick 2.5
+import QtQuick 2.3
 import QtQuick.Controls 1.2
-import QtQuick.Controls.Styles 1.2
+import QtQuick.Controls.Styles 1.4
 import QtQuick.Dialogs 1.2
 
 import QGroundControl.FactSystem 1.0
@@ -202,12 +202,12 @@ Your vehicle will also be restarted in order to complete the process.")
                             QGCCheckBox {
                                 // Although this item is invisible we still use it to manage state
                                 id:             airframeCheckBox
-                                checked:        modelData.name == controller.currentAirframeType
+                                checked:        modelData.name === controller.currentAirframeType
                                 exclusiveGroup: airframeTypeExclusive
                                 visible:        false
 
                                 onCheckedChanged: {
-                                    if (checked && combo.currentIndex != -1) {
+                                    if (checked && combo.currentIndex !== -1) {
                                         console.log("check box change", combo.currentIndex)
                                         controller.autostartId = modelData.airframes[combo.currentIndex].autostartId
                                     }

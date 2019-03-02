@@ -16,7 +16,6 @@
 #include "VehicleComponent.h"
 #include "APMAirframeComponent.h"
 #include "APMAirframeComponentAirframes.h"
-#include "APMAirframeComponentController.h"
 #include "APMAirframeLoader.h"
 #include "APMFlightModesComponent.h"
 #include "APMRadioComponent.h"
@@ -24,30 +23,31 @@
 #include "APMTuningComponent.h"
 #include "APMSensorsComponent.h"
 #include "APMPowerComponent.h"
-#include "MotorComponent.h"
+#include "APMMotorComponent.h"
 #include "APMCameraComponent.h"
 #include "APMLightsComponent.h"
+#include "APMSubFrameComponent.h"
 #include "ESP8266Component.h"
+#include "APMHeliComponent.h"
 
 /// This is the AutoPilotPlugin implementatin for the MAV_AUTOPILOT_ARDUPILOT type.
 APMAutoPilotPlugin::APMAutoPilotPlugin(Vehicle* vehicle, QObject* parent)
-    : AutoPilotPlugin(vehicle, parent)
+    : AutoPilotPlugin           (vehicle, parent)
     , _incorrectParameterVersion(false)
-    , _airframeComponent(NULL)
-    , _cameraComponent(NULL)
-    , _lightsComponent(NULL)
-    , _flightModesComponent(NULL)
-    , _powerComponent(NULL)
-#if 0
-        // Temporarily removed, waiting for new command implementation
-    , _motorComponent(NULL)
-#endif
-    , _radioComponent(NULL)
-    , _safetyComponent(NULL)
-    , _sensorsComponent(NULL)
-    , _tuningComponent(NULL)
-    , _airframeFacts(new APMAirframeLoader(this, vehicle->uas(), this))
-    , _esp8266Component(NULL)
+    , _airframeComponent        (NULL)
+    , _cameraComponent          (NULL)
+    , _lightsComponent          (NULL)
+    , _subFrameComponent        (NULL)
+    , _flightModesComponent     (NULL)
+    , _powerComponent           (NULL)
+    , _motorComponent           (NULL)
+    , _radioComponent           (NULL)
+    , _safetyComponent          (NULL)
+    , _sensorsComponent         (NULL)
+    , _tuningComponent          (NULL)
+    , _airframeFacts            (new APMAirframeLoader(this, vehicle->uas(), this))
+    , _esp8266Component         (NULL)
+    , _heliComponent            (NULL)
 {
     APMAirframeLoader::loadAirframeFactMetaData();
 }
@@ -71,9 +71,12 @@ const QVariantList& APMAutoPilotPlugin::vehicleComponents(void)
                 _components.append(QVariant::fromValue((VehicleComponent*)_radioComponent));
             }
 
-            _flightModesComponent = new APMFlightModesComponent(_vehicle, this);
-            _flightModesComponent->setupTriggerSignals();
-            _components.append(QVariant::fromValue((VehicleComponent*)_flightModesComponent));
+            // No flight modes component for Sub versions 3.5 and up
+            if (!_vehicle->sub() || (_vehicle->versionCompare(3, 5, 0) < 0)) {
+                _flightModesComponent = new APMFlightModesComponent(_vehicle, this);
+                _flightModesComponent->setupTriggerSignals();
+                _components.append(QVariant::fromValue((VehicleComponent*)_flightModesComponent));
+            }
 
             _sensorsComponent = new APMSensorsComponent(_vehicle, this);
             _sensorsComponent->setupTriggerSignals();
@@ -83,19 +86,21 @@ const QVariantList& APMAutoPilotPlugin::vehicleComponents(void)
             _powerComponent->setupTriggerSignals();
             _components.append(QVariant::fromValue((VehicleComponent*)_powerComponent));
 
-#if 0
-    // Temporarily removed, waiting for new command implementation
-
-            if (_vehicle->multiRotor() || _vehicle->vtol()) {
-                _motorComponent = new MotorComponent(_vehicle, this);
+            if (_vehicle->sub() && _vehicle->versionCompare(3, 5, 3) >= 0) {
+                _motorComponent = new APMMotorComponent(_vehicle, this);
                 _motorComponent->setupTriggerSignals();
                 _components.append(QVariant::fromValue((VehicleComponent*)_motorComponent));
             }
-#endif
 
             _safetyComponent = new APMSafetyComponent(_vehicle, this);
             _safetyComponent->setupTriggerSignals();
             _components.append(QVariant::fromValue((VehicleComponent*)_safetyComponent));
+
+            if (_vehicle->vehicleType() == MAV_TYPE_HELICOPTER) {
+                _heliComponent = new APMHeliComponent(_vehicle, this);
+                _heliComponent->setupTriggerSignals();
+                _components.append(QVariant::fromValue((VehicleComponent*)_heliComponent));
+            }
 
             _tuningComponent = new APMTuningComponent(_vehicle, this);
             _tuningComponent->setupTriggerSignals();
@@ -109,6 +114,12 @@ const QVariantList& APMAutoPilotPlugin::vehicleComponents(void)
                 _lightsComponent = new APMLightsComponent(_vehicle, this);
                 _lightsComponent->setupTriggerSignals();
                 _components.append(QVariant::fromValue((VehicleComponent*)_lightsComponent));
+
+                if(_vehicle->versionCompare(3, 5, 0) >= 0) {
+                    _subFrameComponent = new APMSubFrameComponent(_vehicle, this);
+                    _subFrameComponent->setupTriggerSignals();
+                    _components.append(QVariant::fromValue((VehicleComponent*)_subFrameComponent));
+                }
             }
 
             //-- Is there an ESP8266 Connected?
@@ -123,4 +134,39 @@ const QVariantList& APMAutoPilotPlugin::vehicleComponents(void)
     }
 
     return _components;
+}
+
+QString APMAutoPilotPlugin::prerequisiteSetup(VehicleComponent* component) const
+{
+    bool requiresAirframeCheck = false;
+
+    if (qobject_cast<const APMFlightModesComponent*>(component)) {
+        if (_airframeComponent && !_airframeComponent->setupComplete()) {
+            return _airframeComponent->name();
+        }
+        if (_radioComponent && !_radioComponent->setupComplete()) {
+            return _radioComponent->name();
+        }
+        requiresAirframeCheck = true;
+    } else if (qobject_cast<const APMRadioComponent*>(component)) {
+        requiresAirframeCheck = true;
+    } else if (qobject_cast<const APMCameraComponent*>(component)) {
+        requiresAirframeCheck = true;
+    } else if (qobject_cast<const APMPowerComponent*>(component)) {
+        requiresAirframeCheck = true;
+    } else if (qobject_cast<const APMSafetyComponent*>(component)) {
+        requiresAirframeCheck = true;
+    } else if (qobject_cast<const APMTuningComponent*>(component)) {
+        requiresAirframeCheck = true;
+    } else if (qobject_cast<const APMSensorsComponent*>(component)) {
+        requiresAirframeCheck = true;
+    }
+
+    if (requiresAirframeCheck) {
+        if (_airframeComponent && !_airframeComponent->setupComplete()) {
+            return _airframeComponent->name();
+        }
+    }
+
+    return QString();
 }

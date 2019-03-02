@@ -9,6 +9,8 @@
 
 #include "MAVLinkLogManager.h"
 #include "QGCApplication.h"
+#include "SettingsManager.h"
+
 #include <QQmlContext>
 #include <QQmlProperty>
 #include <QQmlEngine>
@@ -21,16 +23,22 @@
 
 QGC_LOGGING_CATEGORY(MAVLinkLogManagerLog, "MAVLinkLogManagerLog")
 
-static const char* kEmailAddressKey         = "MAVLinkLogEmail";
-static const char* kDescriptionsKey         = "MAVLinkLogDescription";
+static const char* kMAVLinkLogGroup         = "MAVLinkLogGroup";
+static const char* kEmailAddressKey         = "Email";
+static const char* kDescriptionsKey         = "Description";
 static const char* kDefaultDescr            = "QGroundControl Session";
-static const char* kPx4URLKey               = "MAVLinkLogURL";
-static const char* kDefaultPx4URL           = "http://logs.px4.io/upload";
-static const char* kEnableAutoUploadKey     = "EnableAutoUploadKey";
-static const char* kEnableAutoStartKey      = "EnableAutoStartKey";
-static const char* kEnableDeletetKey        = "EnableDeleteKey";
-static const char* kUlogExtension           = ".ulg";
+static const char* kPx4URLKey               = "LogURL";
+static const char* kDefaultPx4URL           = "https://logs.px4.io/upload";
+static const char* kEnableAutoUploadKey     = "EnableAutoUpload";
+static const char* kEnableAutoStartKey      = "EnableAutoStart";
+static const char* kEnableDeletetKey        = "EnableDelete";
 static const char* kSidecarExtension        = ".uploaded";
+static const char* kVideoURLKey             = "VideoURL";
+static const char* kWindSpeedKey            = "WindSpeed";
+static const char* kRateKey                 = "RateKey";
+static const char* kPublicLogKey            = "PublicLog";
+static const char* kFeedback                = "feedback";
+static const char* kVideoURL                = "videoUrl";
 
 //-----------------------------------------------------------------------------
 MAVLinkLogFiles::MAVLinkLogFiles(MAVLinkLogManager* manager, const QString& filePath, bool newFile)
@@ -47,7 +55,7 @@ MAVLinkLogFiles::MAVLinkLogFiles(MAVLinkLogManager* manager, const QString& file
     if(!newFile) {
         _size = (quint32)fi.size();
         QString sideCar = filePath;
-        sideCar.replace(kUlogExtension, kSidecarExtension);
+        sideCar.replace(manager->logExtension(), kSidecarExtension);
         QFileInfo sc(sideCar);
         _uploaded = sc.exists();
     }
@@ -143,11 +151,11 @@ bool
 MAVLinkLogProcessor::create(MAVLinkLogManager* manager, const QString path, uint8_t id)
 {
     _fileName.sprintf("%s/%03d-%s%s",
-        path.toLatin1().data(),
-        id,
-        QDateTime::currentDateTime().toString("yyyy-MM-dd-hh-mm-ss-zzz").toLatin1().data(),
-        kUlogExtension);
-    _fd = fopen(_fileName.toLatin1().data(), "wb");
+                      path.toLatin1().data(),
+                      id,
+                      QDateTime::currentDateTime().toString("yyyy-MM-dd-hh-mm-ss-zzz").toLocal8Bit().data(),
+                      manager->logExtension().toLocal8Bit().data());
+    _fd = fopen(_fileName.toLocal8Bit().data(), "wb");
     if(_fd) {
         _record = new MAVLinkLogFiles(manager, _fileName, true);
         _record->setWriting(true);
@@ -236,7 +244,7 @@ MAVLinkLogProcessor::processStreamData(uint16_t sequence, uint8_t first_message,
         if(!_gotHeader) {
             if(data.size() < 16) {
                 //-- Shouldn't happen but if it does, we might as well close shop.
-                qCCritical(MAVLinkLogManagerLog) << "Corrupt log header. Canceling log download.";
+                qCWarning(MAVLinkLogManagerLog) << "Corrupt log header. Canceling log download.";
                 return false;
             }
             //-- Write header
@@ -257,7 +265,7 @@ MAVLinkLogProcessor::processStreamData(uint16_t sequence, uint8_t first_message,
         if(num_drops > 0) {
             _writeUlogMessage(_ulogMessage);
             _ulogMessage.clear();
-            //-- If no usefull information in this message. Drop it.
+            //-- If no useful information in this message. Drop it.
             if(first_message == 255) {
                 break;
             }
@@ -288,10 +296,10 @@ MAVLinkLogProcessor::processStreamData(uint16_t sequence, uint8_t first_message,
 
 //-----------------------------------------------------------------------------
 //-----------------------------------------------------------------------------
-MAVLinkLogManager::MAVLinkLogManager(QGCApplication* app)
-    : QGCTool(app)
+MAVLinkLogManager::MAVLinkLogManager(QGCApplication* app, QGCToolbox* toolbox)
+    : QGCTool(app, toolbox)
     , _enableAutoUpload(true)
-    , _enableAutoStart(true)
+    , _enableAutoStart(false)
     , _nam(NULL)
     , _currentLogfile(NULL)
     , _vehicle(NULL)
@@ -299,34 +307,23 @@ MAVLinkLogManager::MAVLinkLogManager(QGCApplication* app)
     , _loggingDisabled(false)
     , _logProcessor(NULL)
     , _deleteAfterUpload(false)
+    , _windSpeed(-1)
+    , _publicLog(false)
+    , _logginDenied(false)
 {
     //-- Get saved settings
     QSettings settings;
+    settings.beginGroup(kMAVLinkLogGroup);
     setEmailAddress(settings.value(kEmailAddressKey, QString()).toString());
     setDescription(settings.value(kDescriptionsKey, QString(kDefaultDescr)).toString());
     setUploadURL(settings.value(kPx4URLKey, QString(kDefaultPx4URL)).toString());
+    setVideoURL(settings.value(kVideoURLKey, QString()).toString());
     setEnableAutoUpload(settings.value(kEnableAutoUploadKey, true).toBool());
-    setEnableAutoStart(settings.value(kEnableAutoStartKey, true).toBool());
+    setEnableAutoStart(settings.value(kEnableAutoStartKey, false).toBool());
     setDeleteAfterUpload(settings.value(kEnableDeletetKey, false).toBool());
-    //-- Logging location
-    _logPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    _logPath += "/MAVLinkLogs";
-    if(!QDir(_logPath).exists()) {
-        if(!QDir().mkpath(_logPath)) {
-            qCCritical(MAVLinkLogManagerLog) << "Could not create MAVLink log download path:" << _logPath;
-            _loggingDisabled = true;
-        }
-    }
-    if(!_loggingDisabled) {
-        //-- Load current list of logs
-        QString filter = "*";
-        filter += kUlogExtension;
-        QDirIterator it(_logPath, QStringList() << filter, QDir::Files);
-        while(it.hasNext()) {
-            _insertNewLog(new MAVLinkLogFiles(this, it.next()));
-        }
-        qCDebug(MAVLinkLogManagerLog) << "MAVLink logs directory:" << _logPath;
-    }
+    setWindSpeed(settings.value(kWindSpeedKey, -1).toInt());
+    setRating(settings.value(kRateKey, "notset").toString());
+    setPublicLog(settings.value(kPublicLogKey, true).toBool());
 }
 
 //-----------------------------------------------------------------------------
@@ -342,7 +339,25 @@ MAVLinkLogManager::setToolbox(QGCToolbox* toolbox)
     QGCTool::setToolbox(toolbox);
     QQmlEngine::setObjectOwnership(this, QQmlEngine::CppOwnership);
     qmlRegisterUncreatableType<MAVLinkLogManager>("QGroundControl.MAVLinkLogManager", 1, 0, "MAVLinkLogManager", "Reference only");
+    //-- Logging location
+    _ulogExtension  = ".";
+    _ulogExtension += qgcApp()->toolbox()->settingsManager()->appSettings()->logFileExtension;
+    _logPath = qgcApp()->toolbox()->settingsManager()->appSettings()->logSavePath();
+    if(!QDir(_logPath).exists()) {
+        if(!QDir().mkpath(_logPath)) {
+            qCWarning(MAVLinkLogManagerLog) << "Could not create MAVLink log download path:" << _logPath;
+            _loggingDisabled = true;
+        }
+    }
     if(!_loggingDisabled) {
+        //-- Load current list of logs
+        QString filter = "*";
+        filter += _ulogExtension;
+        QDirIterator it(_logPath, QStringList() << filter, QDir::Files);
+        while(it.hasNext()) {
+            _insertNewLog(new MAVLinkLogFiles(this, it.next()));
+        }
+        qCDebug(MAVLinkLogManagerLog) << "MAVLink logs directory:" << _logPath;
         connect(toolbox->multiVehicleManager(), &MultiVehicleManager::activeVehicleChanged, this, &MAVLinkLogManager::_activeVehicleChanged);
     }
 }
@@ -353,6 +368,7 @@ MAVLinkLogManager::setEmailAddress(QString email)
 {
     _emailAddress = email;
     QSettings settings;
+    settings.beginGroup(kMAVLinkLogGroup);
     settings.setValue(kEmailAddressKey, email);
     emit emailAddressChanged();
 }
@@ -363,6 +379,7 @@ MAVLinkLogManager::setDescription(QString description)
 {
     _description = description;
     QSettings settings;
+    settings.beginGroup(kMAVLinkLogGroup);
     settings.setValue(kDescriptionsKey, description);
     emit descriptionChanged();
 }
@@ -376,8 +393,28 @@ MAVLinkLogManager::setUploadURL(QString url)
         _uploadURL = kDefaultPx4URL;
     }
     QSettings settings;
+    settings.beginGroup(kMAVLinkLogGroup);
     settings.setValue(kPx4URLKey, _uploadURL);
     emit uploadURLChanged();
+}
+
+//-----------------------------------------------------------------------------
+void
+MAVLinkLogManager::setFeedback(QString fb)
+{
+    _feedback = fb;
+    emit feedbackChanged();
+}
+
+//-----------------------------------------------------------------------------
+void
+MAVLinkLogManager::setVideoURL(QString url)
+{
+    _videoURL = url;
+    QSettings settings;
+    settings.beginGroup(kMAVLinkLogGroup);
+    settings.setValue(kVideoURLKey, url);
+    emit videoURLChanged();
 }
 
 //-----------------------------------------------------------------------------
@@ -386,6 +423,7 @@ MAVLinkLogManager::setEnableAutoUpload(bool enable)
 {
     _enableAutoUpload = enable;
     QSettings settings;
+    settings.beginGroup(kMAVLinkLogGroup);
     settings.setValue(kEnableAutoUploadKey, enable);
     emit enableAutoUploadChanged();
 }
@@ -396,6 +434,7 @@ MAVLinkLogManager::setEnableAutoStart(bool enable)
 {
     _enableAutoStart = enable;
     QSettings settings;
+    settings.beginGroup(kMAVLinkLogGroup);
     settings.setValue(kEnableAutoStartKey, enable);
     emit enableAutoStartChanged();
 }
@@ -406,8 +445,42 @@ MAVLinkLogManager::setDeleteAfterUpload(bool enable)
 {
     _deleteAfterUpload = enable;
     QSettings settings;
+    settings.beginGroup(kMAVLinkLogGroup);
     settings.setValue(kEnableDeletetKey, enable);
     emit deleteAfterUploadChanged();
+}
+
+//-----------------------------------------------------------------------------
+void
+MAVLinkLogManager::setWindSpeed(int speed)
+{
+    _windSpeed = speed;
+    QSettings settings;
+    settings.beginGroup(kMAVLinkLogGroup);
+    settings.setValue(kWindSpeedKey, speed);
+    emit windSpeedChanged();
+}
+
+//-----------------------------------------------------------------------------
+void
+MAVLinkLogManager::setRating(QString rate)
+{
+    _rating = rate;
+    QSettings settings;
+    settings.beginGroup(kMAVLinkLogGroup);
+    settings.setValue(kRateKey, rate);
+    emit ratingChanged();
+}
+
+//-----------------------------------------------------------------------------
+void
+MAVLinkLogManager::setPublicLog(bool pub)
+{
+    _publicLog = pub;
+    QSettings settings;
+    settings.beginGroup(kMAVLinkLogGroup);
+    settings.setValue(kPublicLogKey, pub);
+    emit publicLogChanged();
 }
 
 //-----------------------------------------------------------------------------
@@ -426,17 +499,20 @@ MAVLinkLogManager::uploadLog()
     }
     for(int i = 0; i < _logFiles.count(); i++) {
         _currentLogfile = qobject_cast<MAVLinkLogFiles*>(_logFiles.get(i));
-        Q_ASSERT(_currentLogfile);
-        if(_currentLogfile->selected()) {
-            _currentLogfile->setSelected(false);
-            if(!_currentLogfile->uploaded() && !_emailAddress.isEmpty() && !_uploadURL.isEmpty()) {
-                _currentLogfile->setUploading(true);
-                _currentLogfile->setProgress(0.0);
-                QString filePath = _makeFilename(_currentLogfile->name());
-                _sendLog(filePath);
-                emit uploadingChanged();
-                return;
+        if (_currentLogfile) {
+            if(_currentLogfile->selected()) {
+                _currentLogfile->setSelected(false);
+                if(!_currentLogfile->uploaded() && !_emailAddress.isEmpty() && !_uploadURL.isEmpty()) {
+                    _currentLogfile->setUploading(true);
+                    _currentLogfile->setProgress(0.0);
+                    QString filePath = _makeFilename(_currentLogfile->name());
+                    _sendLog(filePath);
+                    emit uploadingChanged();
+                    return;
+                }
             }
+        } else {
+            qWarning() << "Internal error";
         }
     }
     _currentLogfile = NULL;
@@ -469,9 +545,12 @@ MAVLinkLogManager::_getFirstSelected()
 {
     for(int i = 0; i < _logFiles.count(); i++) {
         MAVLinkLogFiles* f = qobject_cast<MAVLinkLogFiles*>(_logFiles.get(i));
-        Q_ASSERT(f);
-        if(f->selected()) {
-            return i;
+        if (f) {
+            if(f->selected()) {
+                return i;
+            }
+        } else {
+            qWarning() << "Internal error";
         }
     }
     return -1;
@@ -501,7 +580,7 @@ MAVLinkLogManager::_deleteLog(MAVLinkLogFiles* log)
         qCWarning(MAVLinkLogManagerLog) << "Could not delete MAVLink log file:" << _logPath;
     }
     //-- Remove sidecar file (if any)
-    filePath.replace(kUlogExtension, kSidecarExtension);
+    filePath.replace(_ulogExtension, kSidecarExtension);
     QFile sgone(filePath);
     if(sgone.exists()) {
         sgone.remove();
@@ -518,9 +597,12 @@ MAVLinkLogManager::cancelUpload()
 {
     for(int i = 0; i < _logFiles.count(); i++) {
         MAVLinkLogFiles* pLogFile = qobject_cast<MAVLinkLogFiles*>(_logFiles.get(i));
-        Q_ASSERT(pLogFile);
-        if(pLogFile->selected() && pLogFile != _currentLogfile) {
-            pLogFile->setSelected(false);
+        if (pLogFile) {
+            if(pLogFile->selected() && pLogFile != _currentLogfile) {
+                pLogFile->setSelected(false);
+            }
+        } else {
+            qWarning() << "Internal error";
         }
     }
     if(_currentLogfile) {
@@ -532,7 +614,7 @@ MAVLinkLogManager::cancelUpload()
 void
 MAVLinkLogManager::startLogging()
 {
-    if(_vehicle) {
+    if(_vehicle && _vehicle->px4Firmware() && !_logginDenied) {
         if(_createNewLog()) {
             _vehicle->startMavlinkLog();
             _logRunning = true;
@@ -545,7 +627,7 @@ MAVLinkLogManager::startLogging()
 void
 MAVLinkLogManager::stopLogging()
 {
-    if(_vehicle) {
+    if(_vehicle && _vehicle->px4Firmware()) {
         //-- Tell vehicle to stop sending logs
         _vehicle->stopMavlinkLog();
     }
@@ -588,16 +670,16 @@ MAVLinkLogManager::_sendLog(const QString& logFile)
         defaultDescription = kDefaultDescr;
     }
     if(_emailAddress.isEmpty()) {
-        qCCritical(MAVLinkLogManagerLog) << "User email missing.";
+        qCWarning(MAVLinkLogManagerLog) << "User email missing.";
         return false;
     }
     if(_uploadURL.isEmpty()) {
-        qCCritical(MAVLinkLogManagerLog) << "Upload URL missing.";
+        qCWarning(MAVLinkLogManagerLog) << "Upload URL missing.";
         return false;
     }
     QFileInfo fi(logFile);
     if(!fi.exists()) {
-        qCCritical(MAVLinkLogManagerLog) << "Log file missing:" << logFile;
+        qCWarning(MAVLinkLogManagerLog) << "Log file missing:" << logFile;
         return false;
     }
     QFile* file = new QFile(logFile);
@@ -605,7 +687,7 @@ MAVLinkLogManager::_sendLog(const QString& logFile)
         if(file) {
             delete file;
         }
-        qCCritical(MAVLinkLogManagerLog) << "Could not open log file:" << logFile;
+        qCWarning(MAVLinkLogManagerLog) << "Could not open log file:" << logFile;
         return false;
     }
     if(!_nam) {
@@ -619,17 +701,41 @@ MAVLinkLogManager::_sendLog(const QString& logFile)
     QHttpMultiPart* multiPart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
     QHttpPart emailPart = create_form_part("email", _emailAddress);
     QHttpPart descriptionPart = create_form_part("description", _description);
-    QHttpPart sourcePart = create_form_part("source", "QGroundControl");
-    QHttpPart versionPart = create_form_part("version", _app->applicationVersion());
-    QHttpPart logPart;
-    logPart.setHeader(QNetworkRequest::ContentTypeHeader, "application/octet-stream");
-    logPart.setHeader(QNetworkRequest::ContentDispositionHeader, QString("form-data; name=\"filearg\"; filename=\"%1\"").arg(fi.fileName()));
-    logPart.setBodyDevice(file);
+    QHttpPart sourcePart      = create_form_part("source", "QGroundControl");
+    QHttpPart versionPart     = create_form_part("version", _app->applicationVersion());
+    QHttpPart typePart        = create_form_part("type", "flightreport");
+    QHttpPart windPart        = create_form_part("windSpeed", QString::number(_windSpeed));
+    QHttpPart ratingPart      = create_form_part("rating", _rating);
+    QHttpPart publicPart      = create_form_part("public", _publicLog ? "true" : "false");
     //-- Assemble request and POST it
     multiPart->append(emailPart);
     multiPart->append(descriptionPart);
     multiPart->append(sourcePart);
     multiPart->append(versionPart);
+    multiPart->append(typePart);
+    multiPart->append(windPart);
+    multiPart->append(ratingPart);
+    multiPart->append(publicPart);
+    //-- Optional
+    QHttpPart feedbackPart;
+    if(_feedback.isEmpty()) {
+        feedbackPart = create_form_part(kFeedback, "None Given");
+    } else {
+        feedbackPart = create_form_part(kFeedback, _feedback);
+    }
+    multiPart->append(feedbackPart);
+    QHttpPart videoPart;
+    if(_videoURL.isEmpty()) {
+        videoPart = create_form_part(kVideoURL, "None");
+    } else {
+        videoPart = create_form_part(kVideoURL, _videoURL);
+    }
+    multiPart->append(videoPart);
+    //-- Actual Log File
+    QHttpPart logPart;
+    logPart.setHeader(QNetworkRequest::ContentTypeHeader, "application/octet-stream");
+    logPart.setHeader(QNetworkRequest::ContentDispositionHeader, QString("form-data; name=\"filearg\"; filename=\"%1\"").arg(fi.fileName()));
+    logPart.setBodyDevice(file);
     multiPart->append(logPart);
     file->setParent(multiPart);
     QNetworkRequest request(_uploadURL);
@@ -691,7 +797,7 @@ MAVLinkLogManager::_uploadFinished()
                 _currentLogfile->setUploaded(true);
                 //-- Write side-car file to flag it as uploaded
                 QString sideCar = _makeFilename(_currentLogfile->name());
-                sideCar.replace(kUlogExtension, kSidecarExtension);
+                sideCar.replace(_ulogExtension, kSidecarExtension);
                 FILE* f = fopen(sideCar.toLatin1().data(), "wb");
                 if(f) {
                     fclose(f);
@@ -730,7 +836,7 @@ MAVLinkLogManager::_activeVehicleChanged(Vehicle* vehicle)
     //   far, I'm working on the assumption that multiple vehicles is a rare exception.
     //   For now, we only handle one log download at a time.
     // Disconnect the previous one (if any)
-    if(_vehicle) {
+    if(_vehicle && _vehicle->px4Firmware()) {
         disconnect(_vehicle, &Vehicle::armedChanged,        this, &MAVLinkLogManager::_armedChanged);
         disconnect(_vehicle, &Vehicle::mavlinkLogData,      this, &MAVLinkLogManager::_mavlinkLogData);
         disconnect(_vehicle, &Vehicle::mavCommandResult,    this, &MAVLinkLogManager::_mavCommandResult);
@@ -740,8 +846,10 @@ MAVLinkLogManager::_activeVehicleChanged(Vehicle* vehicle)
         emit canStartLogChanged();
     }
     // Connect new system
-    if(vehicle) {
+    if(vehicle && vehicle->px4Firmware()) {
         _vehicle = vehicle;
+        //-- Reset logging denied flag as well
+        _logginDenied = false;
         connect(_vehicle, &Vehicle::armedChanged,       this, &MAVLinkLogManager::_armedChanged);
         connect(_vehicle, &Vehicle::mavlinkLogData,     this, &MAVLinkLogManager::_mavlinkLogData);
         connect(_vehicle, &Vehicle::mavCommandResult,   this, &MAVLinkLogManager::_mavCommandResult);
@@ -755,7 +863,7 @@ MAVLinkLogManager::_mavlinkLogData(Vehicle* /*vehicle*/, uint8_t /*target_system
 {
     if(_logProcessor && _logProcessor->valid()) {
         if(!_logProcessor->processStreamData(sequence, first_message, data)) {
-            qCCritical(MAVLinkLogManagerLog) << "Error writing MAVLink log file:" << _logProcessor->fileName();
+            qCWarning(MAVLinkLogManagerLog) << "Error writing MAVLink log file:" << _logProcessor->fileName();
             delete _logProcessor;
             _logProcessor = NULL;
             _logRunning = false;
@@ -783,7 +891,12 @@ MAVLinkLogManager::_mavCommandResult(int vehicleId, int component, int command, 
                 qCWarning(MAVLinkLogManagerLog) << "Stop MAVLink log command failed.";
             } else {
                 //-- Could not start logging for some reason.
-                qCWarning(MAVLinkLogManagerLog) << "Start MAVLink log command failed.";
+                if(result == MAV_RESULT_DENIED) {
+                    _logginDenied = true;
+                    qCWarning(MAVLinkLogManagerLog) << "Start MAVLink log command denied.";
+                } else {
+                    qCWarning(MAVLinkLogManagerLog) << "Start MAVLink log command failed.";
+                }
                 _discardLog();
             }
         }
@@ -820,7 +933,7 @@ MAVLinkLogManager::_createNewLog()
         _insertNewLog(_logProcessor->record());
         emit logFilesChanged();
     } else {
-        qCCritical(MAVLinkLogManagerLog) << "Could not create MAVLink log file:" << _logProcessor->fileName();
+        qCWarning(MAVLinkLogManagerLog) << "Could not create MAVLink log file:" << _logProcessor->fileName();
         delete _logProcessor;
         _logProcessor = NULL;
     }
@@ -831,7 +944,7 @@ MAVLinkLogManager::_createNewLog()
 void
 MAVLinkLogManager::_armedChanged(bool armed)
 {
-    if(_vehicle) {
+    if(_vehicle && _vehicle->px4Firmware()) {
         if(armed) {
             if(_enableAutoStart) {
                 startLogging();
@@ -851,6 +964,6 @@ MAVLinkLogManager::_makeFilename(const QString& baseName)
     QString filePath = _logPath;
     filePath += "/";
     filePath += baseName;
-    filePath += kUlogExtension;
+    filePath += _ulogExtension;
     return filePath;
 }

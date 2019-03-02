@@ -8,10 +8,10 @@
  ****************************************************************************/
 
 
-import QtQuick          2.5
+import QtQuick          2.3
 import QtQuick.Controls 1.2
 import QtQuick.Dialogs  1.2
-import QtPositioning    5.2
+import QtPositioning    5.3
 
 import QGroundControl                       1.0
 import QGroundControl.Palette               1.0
@@ -19,7 +19,6 @@ import QGroundControl.Controls              1.0
 import QGroundControl.FlightDisplay         1.0
 import QGroundControl.ScreenTools           1.0
 import QGroundControl.MultiVehicleManager   1.0
-import QGroundControl.QGCPositionManager   1.0
 
 /// Inner common QML for mainWindow
 Item {
@@ -29,7 +28,6 @@ Item {
 
     QGCPalette { id: qgcPal; colorGroupEnabled: true }
 
-    property var    gcsPosition:        QtPositioning.coordinate()  // Starts as invalid coordinate
     property var    currentPopUp:       null
     property real   currentCenterX:     0
     property var    activeVehicle:      QGroundControl.multiVehicleManager.activeVehicle
@@ -39,7 +37,7 @@ Item {
 
     readonly property string _settingsViewSource:   "AppSettings.qml"
     readonly property string _setupViewSource:      "SetupView.qml"
-    readonly property string _planViewSource:       "MissionEditor.qml"
+    readonly property string _planViewSource:       "PlanView.qml"
     readonly property string _analyzeViewSource:    "AnalyzeView.qml"
 
     onHeightChanged: {
@@ -49,13 +47,24 @@ Item {
         }
     }
 
+    function disableToolbar() {
+        toolbarBlocker.enabled = true
+    }
+
+    function enableToolbar() {
+        toolbarBlocker.enabled = false
+    }
+
     function hideAllViews() {
         for (var i=0; i<_viewList.length; i++) {
             _viewList[i].visible = false
         }
+        planToolBar.visible = false
     }
 
     function showSettingsView() {
+        mainWindow.enableToolbar()
+        rootLoader.sourceComponent = null
         if(currentPopUp) {
             currentPopUp.close()
         }
@@ -67,10 +76,11 @@ Item {
         }
         settingsViewLoader.visible  = true
         toolBar.checkSettingsButton()
-        console.log("showSettingsView")
     }
 
     function showSetupView() {
+        mainWindow.enableToolbar()
+        rootLoader.sourceComponent = null
         if(currentPopUp) {
             currentPopUp.close()
         }
@@ -85,6 +95,8 @@ Item {
     }
 
     function showPlanView() {
+        mainWindow.enableToolbar()
+        rootLoader.sourceComponent = null
         if(currentPopUp) {
             currentPopUp.close()
         }
@@ -94,10 +106,12 @@ Item {
         ScreenTools.availableHeight = parent.height - toolBar.height
         hideAllViews()
         planViewLoader.visible = true
-        toolBar.checkPlanButton()
+        planToolBar.visible = true
     }
 
     function showFlyView() {
+        mainWindow.enableToolbar()
+        rootLoader.sourceComponent = null
         if(currentPopUp) {
             currentPopUp.close()
         }
@@ -108,6 +122,8 @@ Item {
     }
 
     function showAnalyzeView() {
+        mainWindow.enableToolbar()
+        rootLoader.sourceComponent = null
         if(currentPopUp) {
             currentPopUp.close()
         }
@@ -130,12 +146,16 @@ Item {
         // The above shutdown causes a flurry of activity as the vehicle components are removed. This in turn
         // causes the Windows Version of Qt to crash if you allow the close event to be accepted. In order to prevent
         // the crash, we ignore the close event and setup a delayed timer to close the window after things settle down.
-        delayedWindowCloseTimer.start()
+        if(ScreenTools.isWindows) {
+            delayedWindowCloseTimer.start()
+        } else {
+            mainWindow.reallyClose()
+        }
     }
 
     MessageDialog {
         id:                 unsavedMissionCloseDialog
-        title:              qsTr("QGroundControl close")
+        title:              qsTr("%1 close").arg(QGroundControl.appName)
         text:               qsTr("You have a mission edit in progress which has not been saved/sent. If you close you will lose changes. Are you sure you want to close?")
         standardButtons:    StandardButton.Yes | StandardButton.No
         modality:           Qt.ApplicationModal
@@ -144,7 +164,7 @@ Item {
         onYes: activeConnectionsCloseDialog.check()
 
         function check() {
-            if (planViewLoader.item && planViewLoader.item.syncNeeded) {
+            if (planViewLoader.item && planViewLoader.item.dirty) {
                 unsavedMissionCloseDialog.open()
             } else {
                 activeConnectionsCloseDialog.check()
@@ -154,8 +174,8 @@ Item {
 
     MessageDialog {
         id:                 activeConnectionsCloseDialog
-        title:              qsTr("QGroundControl close")
-        text:               qsTr("There are still active connections to vehicles. Do you want to disconnect these before closing?")
+        title:              qsTr("%1 close").arg(QGroundControl.appName)
+        text:               qsTr("There are still active connections to vehicles. Are you sure you want to exit?")
         standardButtons:    StandardButton.Yes | StandardButton.Cancel
         modality:           Qt.ApplicationModal
         visible:            false
@@ -181,28 +201,10 @@ Item {
         }
     }
 
-    //-- Detect tablet position
-    Connections {
-        target: QGroundControl.qgcPositionManger
-        onLastPositionUpdated: {
-            if(valid) {
-                if(lastPosition.latitude) {
-                    if(Math.abs(lastPosition.latitude)  > 0.001) {
-                        if(lastPosition.longitude) {
-                            if(Math.abs(lastPosition.longitude)  > 0.001) {
-                                gcsPosition = QtPositioning.coordinate(lastPosition.latitude,lastPosition.longitude)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     property var messageQueue: []
 
     function showMessage(message) {
-        if(criticalMmessageArea.visible) {
+        if(criticalMmessageArea.visible || QGroundControl.videoManager.fullScreen) {
             messageQueue.push(message)
         } else {
             criticalMessageText.text = message
@@ -210,10 +212,10 @@ Item {
         }
     }
 
-    function formatMessage(message) {
-        message = message.replace(new RegExp("<#E>", "g"), "color: #f95e5e; font: " + (ScreenTools.defaultFontPointSize.toFixed(0) - 1) + "pt monospace;");
-        message = message.replace(new RegExp("<#I>", "g"), "color: #f9b55e; font: " + (ScreenTools.defaultFontPointSize.toFixed(0) - 1) + "pt monospace;");
-        message = message.replace(new RegExp("<#N>", "g"), "color: #ffffff; font: " + (ScreenTools.defaultFontPointSize.toFixed(0) - 1) + "pt monospace;");
+    function formatMessage(message) {        
+        message = message.replace(new RegExp("<#E>", "g"), "color: " + qgcPal.warningText + "; font: " + (ScreenTools.defaultFontPointSize.toFixed(0) - 1) + "pt monospace;");
+        message = message.replace(new RegExp("<#I>", "g"), "color: " + qgcPal.warningText + "; font: " + (ScreenTools.defaultFontPointSize.toFixed(0) - 1) + "pt monospace;");
+        message = message.replace(new RegExp("<#N>", "g"), "color: " + qgcPal.text + "; font: " + (ScreenTools.defaultFontPointSize.toFixed(0) - 1) + "pt monospace;");
         return message;
     }
 
@@ -226,41 +228,54 @@ Item {
     }
 
     function showMessageArea() {
+        mainWindow.enableToolbar()
+        rootLoader.sourceComponent = null
+        var currentlyVisible = messageArea.visible
         if(currentPopUp) {
             currentPopUp.close()
         }
-        if(QGroundControl.multiVehicleManager.activeVehicleAvailable) {
-            messageText.text = formatMessage(activeVehicle.formatedMessages)
-            //-- Hack to scroll to last message
-            for (var i = 0; i < activeVehicle.messageCount; i++)
-                messageFlick.flick(0,-5000)
-            activeVehicle.resetMessages()
-        } else {
-            messageText.text = qsTr("No Messages")
+        if(!currentlyVisible) {
+            if(QGroundControl.multiVehicleManager.activeVehicleAvailable) {
+                messageText.text = formatMessage(activeVehicle.formatedMessages)
+                //-- Hack to scroll to last message
+                for (var i = 0; i < activeVehicle.messageCount; i++)
+                    messageFlick.flick(0,-5000)
+                activeVehicle.resetMessages()
+            } else {
+                messageText.text = qsTr("No Messages")
+            }
+            currentPopUp = messageArea
+            messageArea.visible = true
         }
-        currentPopUp = messageArea
-        messageArea.visible = true
     }
 
     function showPopUp(dropItem, centerX) {
+        mainWindow.enableToolbar()
+        rootLoader.sourceComponent = null
+        var oldIndicator = indicatorDropdown.sourceComponent
         if(currentPopUp) {
             currentPopUp.close()
         }
-        indicatorDropdown.centerX = centerX
-        indicatorDropdown.sourceComponent = dropItem
-        indicatorDropdown.visible = true
-        currentPopUp = indicatorDropdown
+        if(oldIndicator !== dropItem) {
+            //console.log(oldIndicator)
+            //console.log(dropItem)
+            indicatorDropdown.centerX = centerX
+            indicatorDropdown.sourceComponent = dropItem
+            indicatorDropdown.visible = true
+            currentPopUp = indicatorDropdown
+        }
     }
 
     //-- Main UI
 
     MainToolBar {
         id:                 toolBar
-        height:             ScreenTools.defaultFontPixelHeight * 3
+        height:             ScreenTools.toolbarHeight
+        visible:            !QGroundControl.videoManager.fullScreen
         anchors.left:       parent.left
         anchors.right:      parent.right
         anchors.top:        parent.top
-        isBackgroundDark:   flightView.isBackgroundDark
+        opacity:            planToolBar.visible ? 0 : 1
         z:                  QGroundControl.zOrderTopMost
 
         Component.onCompleted:  ScreenTools.availableHeight = parent.height - toolBar.height
@@ -269,6 +284,37 @@ Item {
         onShowPlanView:         mainWindow.showPlanView()
         onShowFlyView:          mainWindow.showFlyView()
         onShowAnalyzeView:      mainWindow.showAnalyzeView()
+        onArmVehicle:           flightView.guidedController.confirmAction(flightView.guidedController.actionArm)
+        onDisarmVehicle: {
+            if (flightView.guidedController.showEmergenyStop) {
+                flightView.guidedController.confirmAction(flightView.guidedController.actionEmergencyStop)
+            } else {
+                flightView.guidedController.confirmAction(flightView.guidedController.actionDisarm)
+            }
+        }
+        onVtolTransitionToFwdFlight:    flightView.guidedController.confirmAction(flightView.guidedController.actionVtolTransitionToFwdFlight)
+        onVtolTransitionToMRFlight:     flightView.guidedController.confirmAction(flightView.guidedController.actionVtolTransitionToMRFlight)
+
+        //-- Entire tool bar area disable on cammand
+        DeadMouseArea {
+            id:             toolbarBlocker
+            enabled:        false
+            anchors.fill:   parent
+        }
+    }
+
+    PlanToolBar {
+        id:                 planToolBar
+        height:             ScreenTools.toolbarHeight
+        anchors.left:       parent.left
+        anchors.right:      parent.right
+        anchors.top:        parent.top
+        z:                  toolBar.z + 1
+
+        onShowFlyView: {
+            planToolBar.visible = false
+            mainWindow.showFlyView()
+        }
     }
 
     Loader {
@@ -294,18 +340,29 @@ Item {
         anchors.top:        toolBar.bottom
         anchors.bottom:     parent.bottom
         visible:            false
+
+        property var planToolBar: planToolBar
     }
 
     Loader {
         id:                 planViewLoader
         anchors.fill:       parent
         visible:            false
+
+        property var toolbar: planToolBar
     }
 
     FlightDisplayView {
         id:                 flightView
         anchors.fill:       parent
         visible:            true
+        //-------------------------------------------------------------------------
+        //-- Loader helper for any child, no matter how deep can display an element
+        //   on top of the video window.
+        Loader {
+            id:             rootVideoLoader
+            anchors.centerIn: parent
+        }
     }
 
     Loader {
@@ -343,22 +400,22 @@ Item {
     //-------------------------------------------------------------------------
     //-- System Message Area
     Rectangle {
-        id:                 messageArea
+        id:                         messageArea
+        width:                      mainWindow.width  * 0.5
+        height:                     mainWindow.height * 0.5
+        anchors.horizontalCenter:   parent.horizontalCenter
+        anchors.top:                parent.top
+        anchors.topMargin:          toolBar.height + ScreenTools.defaultFontPixelHeight
+        radius:                     ScreenTools.defaultFontPixelHeight * 0.5
+        color:                      qgcPal.window
+        border.color:               qgcPal.text
+        visible:                    false
+
         function close() {
             currentPopUp = null
             messageText.text    = ""
             messageArea.visible = false
         }
-        width:              mainWindow.width  * 0.5
-        height:             mainWindow.height * 0.5
-        color:              Qt.rgba(0,0,0,0.8)
-        visible:            false
-        radius:             ScreenTools.defaultFontPixelHeight * 0.5
-        border.color:       "#808080"
-        border.width:       2
-        anchors.horizontalCenter:   parent.horizontalCenter
-        anchors.top:                parent.top
-        anchors.topMargin:          toolBar.height + ScreenTools.defaultFontPixelHeight
         MouseArea {
             // This MouseArea prevents the Map below it from getting Mouse events. Without this
             // things like mousewheel will scroll the Flickable and then scroll the map as well.
@@ -378,11 +435,11 @@ Item {
                 id:             messageText
                 readOnly:       true
                 textFormat:     TextEdit.RichText
-                color:          "white"
+                color:          qgcPal.text
             }
         }
         //-- Dismiss System Message
-        Image {
+        QGCColoredImage {
             anchors.margins:    ScreenTools.defaultFontPixelHeight * 0.5
             anchors.top:        parent.top
             anchors.right:      parent.right
@@ -393,6 +450,7 @@ Item {
             fillMode:           Image.PreserveAspectFit
             mipmap:             true
             smooth:             true
+            color:              qgcPal.text
             MouseArea {
                 anchors.fill:       parent
                 anchors.margins:    ScreenTools.isMobile ? -ScreenTools.defaultFontPixelHeight : 0
@@ -402,7 +460,7 @@ Item {
             }
         }
         //-- Clear Messages
-        Image {
+        QGCColoredImage {
             anchors.bottom:     parent.bottom
             anchors.right:      parent.right
             anchors.margins:    ScreenTools.defaultFontPixelHeight * 0.5
@@ -413,6 +471,7 @@ Item {
             fillMode:           Image.PreserveAspectFit
             mipmap:             true
             smooth:             true
+            color:              qgcPal.text
             MouseArea {
                 anchors.fill:   parent
                 onClicked: {
@@ -431,13 +490,13 @@ Item {
         id:                         criticalMmessageArea
         width:                      mainWindow.width  * 0.55
         height:                     Math.min(criticalMessageText.height + _textMargins * 2, ScreenTools.defaultFontPixelHeight * 6)
-        color:                      "#eecc44"
+        color:                      qgcPal.alertBackground
         visible:                    false
         radius:                     ScreenTools.defaultFontPixelHeight * 0.5
         anchors.horizontalCenter:   parent.horizontalCenter
         anchors.top:                parent.top
         anchors.topMargin:          toolBar.height + ScreenTools.defaultFontPixelHeight / 2
-        border.color:               "#808080"
+        border.color:               qgcPal.alertBorder
         border.width:               2
 
         readonly property real _textMargins: ScreenTools.defaultFontPixelHeight
@@ -486,7 +545,7 @@ Item {
                 font.pointSize: ScreenTools.defaultFontPointSize
                 font.family:    ScreenTools.demiboldFontFamily
                 wrapMode:       TextEdit.WordWrap
-                color:          "black"
+                color:          qgcPal.alertText
             }
         }
 
@@ -501,7 +560,7 @@ Item {
             sourceSize.height:  width
             source:             "/res/XDelete.svg"
             fillMode:           Image.PreserveAspectFit
-            color:              "black"
+            color:              qgcPal.alertText
             MouseArea {
                 anchors.fill:       parent
                 anchors.margins:    ScreenTools.isMobile ? -ScreenTools.defaultFontPixelHeight : 0
@@ -522,7 +581,7 @@ Item {
             source:             "/res/ArrowDown.svg"
             fillMode:           Image.PreserveAspectFit
             visible:            criticalMessageText.lineCount > 5
-            color:              "black"
+            color:              qgcPal.alertText
             MouseArea {
                 anchors.fill:   parent
                 onClicked: {
@@ -531,5 +590,14 @@ Item {
             }
         }
     }
+
+    //-------------------------------------------------------------------------
+    //-- Loader helper for any child, no matter how deep can display an element
+    //   in the middle of the main window.
+    Loader {
+        id:         rootLoader
+        anchors.centerIn: parent
+    }
+
 }
 

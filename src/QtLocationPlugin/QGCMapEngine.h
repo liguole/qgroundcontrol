@@ -78,15 +78,15 @@ public:
     const QString               userAgent           () { return _userAgent; }
     void                        setUserAgent        (const QString& ua) { _userAgent = ua; }
     UrlFactory::MapType         hashToType          (const QString& hash);
-    QString                     getMapBoxToken      ();
-    void                        setMapBoxToken      (const QString& token);
     quint32                     getMaxDiskCache     ();
     void                        setMaxDiskCache     (quint32 size);
     quint32                     getMaxMemCache      ();
     void                        setMaxMemCache      (quint32 size);
     const QString               getCachePath        () { return _cachePath; }
     const QString               getCacheFilename    () { return _cacheFile; }
+    void                        testInternet        ();
     bool                        wasCacheReset       () { return _cacheWasReset; }
+    bool                        isInternetActive    () { return _isInternetActive; }
 
     UrlFactory*                 urlFactory          () { return _urlFactory; }
 
@@ -94,18 +94,25 @@ public:
     static QGCTileSet           getTileCount        (int zoom, double topleftLon, double topleftLat, double bottomRightLon, double bottomRightLat, UrlFactory::MapType mapType);
     static int                  long2tileX          (double lon, int z);
     static int                  lat2tileY           (double lat, int z);
+    static int                  long2elevationTileX (double lon, int z);
+    static int                  lat2elevationTileY  (double lat, int z);
     static QString              getTileHash         (UrlFactory::MapType type, int x, int y, int z);
     static UrlFactory::MapType  getTypeFromName     (const QString &name);
     static QString              bigSizeToString     (quint64 size);
     static QString              numberToString      (quint64 number);
     static int                  concurrentDownloads (UrlFactory::MapType type);
 
+    /// size of an elevation tile in degree
+    static const double         srtm1TileSize;
+
 private slots:
     void _updateTotals          (quint32 totaltiles, quint64 totalsize, quint32 defaulttiles, quint64 defaultsize);
     void _pruned                ();
+    void _internetStatus        (bool active);
 
 signals:
     void updateTotals           (quint32 totaltiles, quint64 totalsize, quint32 defaulttiles, quint64 defaultsize);
+    void internetUpdated        ();
 
 private:
     void _wipeOldCaches         ();
@@ -116,13 +123,13 @@ private:
     QGCCacheWorker          _worker;
     QString                 _cachePath;
     QString                 _cacheFile;
-    QString                 _mapBoxToken;
     UrlFactory*             _urlFactory;
     QString                 _userAgent;
     quint32                 _maxDiskCache;
     quint32                 _maxMemCache;
     bool                    _prunning;
     bool                    _cacheWasReset;
+    bool                    _isInternetActive;
 };
 
 extern QGCMapEngine*    getQGCMapEngine();

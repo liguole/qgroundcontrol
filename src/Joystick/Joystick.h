@@ -30,12 +30,18 @@ public:
 
     ~Joystick();
 
-    typedef struct {
+    typedef struct Calibration_t {
         int     min;
         int     max;
         int     center;
         int     deadband;
         bool    reversed;
+        Calibration_t()
+            : min(-32767)
+            , max(32767)
+            , center(0)
+            , deadband(0)
+            , reversed(false) {}
     } Calibration_t;
 
     typedef enum {
@@ -66,8 +72,12 @@ public:
     Q_INVOKABLE QString getButtonAction(int button);
 
     Q_PROPERTY(int throttleMode READ throttleMode WRITE setThrottleMode NOTIFY throttleModeChanged)
-    Q_PROPERTY(bool exponential READ exponential WRITE setExponential NOTIFY exponentialChanged)
+    Q_PROPERTY(bool negativeThrust READ negativeThrust WRITE setNegativeThrust NOTIFY negativeThrustChanged)
+    Q_PROPERTY(float exponential READ exponential WRITE setExponential NOTIFY exponentialChanged)
     Q_PROPERTY(bool accumulator READ accumulator WRITE setAccumulator NOTIFY accumulatorChanged)
+    Q_PROPERTY(bool requiresCalibration READ requiresCalibration CONSTANT)
+    Q_PROPERTY(bool circleCorrection READ circleCorrection WRITE setCircleCorrection NOTIFY circleCorrectionChanged)
+    Q_PROPERTY(float frequency READ frequency WRITE setFrequency NOTIFY frequencyChanged)
 
     // Property accessors
 
@@ -88,12 +98,22 @@ public:
     QVariantList buttonActions(void);
 
     QString name(void) { return _name; }
+/*
+    // Joystick index used by sdl library
+    // Settable because sdl library remaps indices after certain events
+    virtual int index(void) = 0;
+    virtual void setIndex(int index) = 0;
+*/
+	virtual bool requiresCalibration(void) { return true; }
 
     int throttleMode(void);
     void setThrottleMode(int mode);
 
-    bool exponential(void);
-    void setExponential(bool expo);
+    bool negativeThrust(void);
+    void setNegativeThrust(bool allowNegative);
+
+    float exponential(void);
+    void setExponential(float expo);
 
     bool accumulator(void);
     void setAccumulator(bool accu);
@@ -101,17 +121,17 @@ public:
     bool deadband(void);
     void setDeadband(bool accu);
 
-    typedef enum {
-        CalibrationModeOff,         // Not calibrating
-        CalibrationModeMonitor,     // Monitors are active, continue to send to vehicle if already polling
-        CalibrationModeCalibrating, // Calibrating, stop sending joystick to vehicle
-    } CalibrationMode_t;
+    bool circleCorrection(void);
+    void setCircleCorrection(bool circleCorrection);
+
+    void setTXMode(int mode);
+    int getTXMode(void) { return _transmitterMode; }
 
     /// Set the current calibration mode
-    void startCalibrationMode(CalibrationMode_t mode);
+    void setCalibrationMode(bool calibrating);
 
-    /// Clear the current calibration mode
-    void stopCalibrationMode(CalibrationMode_t mode);
+    float frequency();
+    void setFrequency(float val);
 
 signals:
     void calibratedChanged(bool calibrated);
@@ -124,11 +144,15 @@ signals:
 
     void throttleModeChanged(int mode);
 
-    void exponentialChanged(bool exponential);
+    void negativeThrustChanged(bool allowNegative);
+
+    void exponentialChanged(float exponential);
 
     void accumulatorChanged(bool accumulator);
 
     void enabledChanged(bool enabled);
+
+    void circleCorrectionChanged(bool circleCorrection);
 
     /// Signal containing new joystick information
     ///     @param roll     Range is -1:1, negative meaning roll left, positive meaning roll right
@@ -140,13 +164,19 @@ signals:
 
     void buttonActionTriggered(int action);
 
+    void frequencyChanged   ();
+    void stepZoom           (int direction);
+    void stepCamera         (int direction);
+    void stepStream         (int direction);
+
 protected:
-    void _saveSettings(void);
-    void _loadSettings(void);
-    float _adjustRange(int value, Calibration_t calibration, bool withDeadbands);
-    void _buttonAction(const QString& action);
-    bool _validAxis(int axis);
-    bool _validButton(int button);
+    void    _setDefaultCalibration(void);
+    void    _saveSettings(void);
+    void    _loadSettings(void);
+    float   _adjustRange(int value, Calibration_t calibration, bool withDeadbands);
+    void    _buttonAction(const QString& action);
+    bool    _validAxis(int axis);
+    bool    _validButton(int button);
 
 private:
     virtual bool _open() = 0;
@@ -156,6 +186,10 @@ private:
     virtual bool _getButton(int i) = 0;
     virtual int _getAxis(int i) = 0;
     virtual uint8_t _getHat(int hat,int i) = 0;
+
+    void _updateTXModeSettingsKey(Vehicle* activeVehicle);
+    int _mapFunctionMode(int mode, int function);
+    void _remapAxes(int currentMode, int newMode, int (&newMapping)[maxFunction]);
 
     // Override from QThread
     virtual void run(void);
@@ -172,7 +206,8 @@ protected:
     int     _hatButtonCount;
     int     _totalButtonCount;
 
-    CalibrationMode_t   _calibrationMode;
+    static int          _transmitterMode;
+    bool                _calibrationMode;
 
     int*                _rgAxisValues;
     Calibration_t*      _rgCalibration;
@@ -184,9 +219,13 @@ protected:
 
     ThrottleMode_t      _throttleMode;
 
-    bool                _exponential;
+    bool                _negativeThrust;
+
+    float                _exponential;
     bool                _accumulator;
     bool                _deadband;
+    bool                _circleCorrection;
+    float               _frequency;
 
     Vehicle*            _activeVehicle;
     bool                _pollingStartedForCalibration;
@@ -203,6 +242,28 @@ private:
     static const char* _exponentialSettingsKey;
     static const char* _accumulatorSettingsKey;
     static const char* _deadbandSettingsKey;
+    static const char* _circleCorrectionSettingsKey;
+    static const char* _frequencySettingsKey;
+    static const char* _txModeSettingsKey;
+    static const char* _fixedWingTXModeSettingsKey;
+    static const char* _multiRotorTXModeSettingsKey;
+    static const char* _roverTXModeSettingsKey;
+    static const char* _vtolTXModeSettingsKey;
+    static const char* _submarineTXModeSettingsKey;
+
+    static const char* _buttonActionArm;
+    static const char* _buttonActionDisarm;
+    static const char* _buttonActionVTOLFixedWing;
+    static const char* _buttonActionVTOLMultiRotor;
+    static const char* _buttonActionZoomIn;
+    static const char* _buttonActionZoomOut;
+    static const char* _buttonActionNextStream;
+    static const char* _buttonActionPreviousStream;
+    static const char* _buttonActionNextCamera;
+    static const char* _buttonActionPreviousCamera;
+
+private slots:
+    void _activeVehicleChanged(Vehicle* activeVehicle);
 };
 
 #endif
